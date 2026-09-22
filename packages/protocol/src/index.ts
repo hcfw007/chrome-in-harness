@@ -1,7 +1,8 @@
 /**
- * WS 协议 v1：server ↔ extension 消息定义与类型守卫。
+ * WS 协议 v1：server ↔ extension 的消息定义与类型守卫。
+ * 两端共用这一份定义，避免各写一套导致漂移。
  *
- * 请求（server → extension）: { v: 1, id: string, tool: string, params: unknown }
+ * 请求（server → extension）: { v: 1, id, tool, params }
  * 响应（extension → server）: { v: 1, id, ok: true, result } | { v: 1, id, ok: false, error }
  * 握手（extension → server）: { v: 1, type: "hello", version, userAgent }
  */
@@ -70,4 +71,17 @@ export function isWsResponse(value: unknown): value is WsResponse {
   if (value['ok'] === true) return 'result' in value
   if (value['ok'] === false) return typeof value['error'] === 'string'
   return false
+}
+
+/** 从 extension 收到的任意消息里解析出握手或响应；无法识别返回 undefined。 */
+export function parseExtensionMessage(raw: string): WsExtensionMessage | undefined {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return undefined
+  }
+  if (isWsHello(parsed)) return parsed
+  if (isWsResponse(parsed)) return parsed
+  return undefined
 }

@@ -12,10 +12,6 @@ export function register(name: string, handler: ToolHandler): void {
   registry.set(name, handler)
 }
 
-export function hasTool(name: string): boolean {
-  return registry.has(name)
-}
-
 export async function dispatch(name: string, params: unknown): Promise<unknown> {
   const handler = registry.get(name)
   if (handler === undefined) {

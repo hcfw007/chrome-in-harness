@@ -4,6 +4,8 @@ import {WsBridge} from './ws-bridge.js'
 
 const WS_PORT = Number(process.env['WS_PORT'] ?? 8765)
 const HTTP_PORT = Number(process.env['HTTP_PORT'] ?? 12306)
+/** 设置后只接受该扩展 ID 的 WS 连接；留空则接受任意 chrome-extension:// 来源。 */
+const EXTENSION_ID = process.env['CIC_EXTENSION_ID']
 
 function startHttpServer(wsBridge: WsBridge): void {
   const httpServer = createServer((req, res) => {
@@ -13,7 +15,7 @@ function startHttpServer(wsBridge: WsBridge): void {
       res.end(JSON.stringify({error: 'Not found. MCP endpoint is at /mcp'}))
       return
     }
-    handleMcpRequest(req, res, wsBridge).catch((error: unknown) => {
+    handleMcpRequest(req, res, wsBridge, HTTP_PORT).catch((error: unknown) => {
       console.error(`[mcp] unhandled error: ${error instanceof Error ? error.message : error}`)
       if (!res.headersSent) {
         res.writeHead(500, {'Content-Type': 'application/json'})
@@ -26,9 +28,12 @@ function startHttpServer(wsBridge: WsBridge): void {
   })
 }
 
-function main(): void {
-  const wsBridge = new WsBridge(WS_PORT)
-  wsBridge.start()
+async function main(): Promise<void> {
+  const wsBridge = new WsBridge({port: WS_PORT, allowedExtensionId: EXTENSION_ID})
+  await wsBridge.start()
+  if (EXTENSION_ID !== undefined && EXTENSION_ID.length > 0) {
+    console.log(`[ws] restricted to extension id ${EXTENSION_ID}`)
+  }
   startHttpServer(wsBridge)
 
   const shutdown = (): void => {
@@ -40,4 +45,7 @@ function main(): void {
   process.on('SIGTERM', shutdown)
 }
 
-main()
+main().catch((error: unknown) => {
+  console.error(`[server] failed to start: ${error instanceof Error ? error.message : error}`)
+  process.exit(1)
+})

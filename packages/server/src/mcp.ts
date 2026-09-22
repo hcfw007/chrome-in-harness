@@ -7,16 +7,26 @@ const SERVER_NAME = 'claude-in-chrome'
 const SERVER_VERSION = '0.1.0'
 const MAX_BODY_BYTES = 1024 * 1024
 
-function writeJsonRpcError(res: ServerResponse, status: number, message: string): void {
+const PARSE_ERROR = -32700
+const INVALID_REQUEST = -32600
+
+class BodyTooLargeError extends Error {
+  constructor() {
+    super('Request body too large')
+  }
+}
+
+function writeJsonRpcError(res: ServerResponse, status: number, code: number, message: string): void {
   res.writeHead(status, {'Content-Type': 'application/json'})
-  res.end(JSON.stringify({jsonrpc: '2.0', error: {code: -32700, message}, id: null}))
+  res.end(JSON.stringify({jsonrpc: '2.0', error: {code, message}, id: null}))
 }
 
 async function readBodyOr400(req: IncomingMessage, res: ServerResponse): Promise<unknown> {
   try {
     return await readJsonBody(req)
   } catch (error) {
-    writeJsonRpcError(res, 400, error instanceof Error ? error.message : 'Bad request')
+    const code = error instanceof BodyTooLargeError ? INVALID_REQUEST : PARSE_ERROR
+    writeJsonRpcError(res, 400, code, error instanceof Error ? error.message : 'Bad request')
     return undefined
   }
 }
@@ -27,7 +37,7 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
     req.on('data', (chunk: Buffer) => {
       raw += chunk.toString('utf-8')
       if (raw.length > MAX_BODY_BYTES) {
-        reject(new Error('Request body too large'))
+        reject(new BodyTooLargeError())
         req.destroy()
       }
     })
@@ -79,10 +89,22 @@ function createMcpServer(wsBridge: WsBridge): McpServer {
   return server
 }
 
+/**
+ * DNS rebinding 防护：
+ * - allowedHosts 强制校验 Host，恶意域名解析到 127.0.0.1 后 Host 不匹配即被拒
+ * - allowedOrigins 仅在 Origin 存在时校验：浏览器页面必带 Origin 会被拒，
+ *   Claude Code 这类非浏览器客户端不带 Origin，正常放行
+ */
+function localOnlyOrigins(port: number): {allowedHosts: string[]; allowedOrigins: string[]} {
+  const hosts = [`127.0.0.1:${port}`, `localhost:${port}`]
+  return {allowedHosts: hosts, allowedOrigins: hosts.map((host) => `http://${host}`)}
+}
+
 export async function handleMcpRequest(
   req: IncomingMessage,
   res: ServerResponse,
   wsBridge: WsBridge,
+  port: number,
 ): Promise<void> {
   const body = await readBodyOr400(req, res)
   if (body === undefined) return
@@ -91,6 +113,8 @@ export async function handleMcpRequest(
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
+    enableDnsRebindingProtection: true,
+    ...localOnlyOrigins(port),
   })
   res.on('close', () => {
     void transport.close()
