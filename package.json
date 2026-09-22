@@ -1,0 +1,17 @@
+{
+  "name": "claude-in-chrome-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude-in-Chrome style browser MCP: control a real Chrome profile via a MV3 extension bridged to a local MCP server",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev -w @cic/server",
+    "build:extension": "npm run build -w @cic/extension",
+    "build": "npm run build -w @cic/server && npm run build -w @cic/extension"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
