@@ -9,9 +9,15 @@
   "scripts": {
     "dev:server": "npm run dev -w @cic/server",
     "build:extension": "npm run build -w @cic/extension",
-    "build": "npm run build -w @cic/server && npm run build -w @cic/extension"
+    "build": "npm run build -w @cic/server && npm run build -w @cic/extension",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "@ddyscn/lint-config": "^0.0.2",
+    "eslint": "^10.11.0"
   }
 }
