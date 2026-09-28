@@ -1,6 +1,7 @@
 import type {IncomingMessage, ServerResponse} from 'node:http'
 import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js'
 import {StreamableHTTPServerTransport} from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import {registerAllTools} from './tools/index.js'
 import type {WsBridge} from './ws-bridge.js'
 
 const SERVER_NAME = 'claude-in-chrome'
@@ -56,36 +57,16 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
   })
 }
 
-async function callPing(wsBridge: WsBridge): Promise<string> {
-  try {
-    const result = await wsBridge.sendToExtension('ping', {})
-    return JSON.stringify(result, null, 2)
-  } catch (error) {
-    return error instanceof Error
-      ? `Error: ${error.message}`
-      : 'Error: unknown failure while contacting the extension'
-  }
-}
-
 function createMcpServer(wsBridge: WsBridge): McpServer {
   const server = new McpServer(
     {name: SERVER_NAME, version: SERVER_VERSION},
-    {instructions: 'Tools that operate on a real Chrome browser via a local extension bridge.'},
-  )
-  server.registerTool(
-    'ping',
     {
-      title: 'Ping the Chrome extension',
-      description:
-        'Check connectivity with the Chrome extension. Returns its version and userAgent.',
-      inputSchema: {},
-    },
-    async () => {
-      const text = await callPing(wsBridge)
-      const isError = text.startsWith('Error:')
-      return {content: [{type: 'text', text}], isError}
+      instructions:
+        'Tools that operate on a real Chrome browser via a local extension bridge. ' +
+        'Pages are read via accessibility snapshots with [ref=eN] ids; interactive tools accept those refs.',
     },
   )
+  registerAllTools(server, (tool, params) => wsBridge.sendToExtension(tool, params))
   return server
 }
 
