@@ -28,9 +28,19 @@ Chrome 扩展 (MV3, WXT)  --WebSocket client-->  本地 server (Node, ws on 127.
 - [x] MCP HTTP 端点（Streamable HTTP，stateless）
 - [x] 工具：`ping`（返回扩展版本 + userAgent，验证全链路连通）
 - [x] WS Origin 鉴权 + MCP DNS rebinding 防护
-- [x] 协议单一来源（`@cic/protocol`）、server 侧单测（vitest）、ESLint（`@ddyscn/lint-config`）
-- [ ] Phase 2：a11y 快照 + ref 交互（click / type / snapshot，类似 Claude-in-Chrome 的 ref 机制）
-- [ ] Phase 3：域名白名单 + `evaluateScript`
+- [x] 协议单一来源（`@cic/protocol`）、单测（vitest，三包）、ESLint（`@ddyscn/lint-config`）
+- [x] Phase 2：a11y 快照 + ref 交互 + 域名白名单（见下）
+- [ ] Phase 3：受限 `evaluateScript`
+
+## Phase 2：快照 + ref 交互 + 白名单
+
+**工具集**（12 个）：`ping`、`navigate`、`snapshot`、`click`、`hover`、`type`、`scroll`、`screenshot`、`tab_list`、`tab_new`、`tab_select`、`tab_close`。
+
+- **snapshot**：`chrome.debugger` + CDP `Accessibility.getFullAXTree`，渲染成 Playwright ariaSnapshot 风格的缩进文本，交互元素带 `[ref=eN]`；click/hover/type/scroll 只接受 ref，杜绝选择器漂移
+- **ref 生命周期**：ref 绑定 tab 的最近一次快照；导航/关 tab/debugger 分离即失效；SPA 重渲染导致的节点失效在 CDP 层映射为 `STALE_REF`；SW 被杀后报 `NO_SNAPSHOT` 引导重新 snapshot
+- **真实输入**：点击/输入走 CDP `Input.*`（isTrusted=true），与真人操作无法区分
+- **域名白名单**：`chrome.storage.local` 持久化，扩展侧在 attach 前校验，空名单 = 拒绝全部；规则 `example.com` 匹配自身与任意深度子域；首次安装自动打开 options 页
+- **代价（已接受）**：attach 期间 Chrome 显示「正在调试」黄条；目标 tab 打开 DevTools 会顶掉扩展会话，工具报 `DEBUGGER_BUSY`，关闭 DevTools 后自动恢复
 
 ## 开发步骤
 
@@ -56,7 +66,4 @@ claude mcp add -s user claude-in-chrome --transport http http://127.0.0.1:12306/
 
 ## Roadmap
 
-- **Phase 2** — a11y 快照 + ref 交互：把页面 accessibility tree 转成带 `ref` 编号的快照，交互工具只接受 ref（click/type/scroll/hover），杜绝 CSS 选择器漂移
-- **Phase 3** — 域名白名单（默认仅 user 配置的域可操作）+ 受限 `evaluateScript`
-
-> 注：Phase 2 一落地，工具就具备在任意已登录站点上执行操作的能力，域名白名单值得提前到 Phase 2 之前。
+- **Phase 3** — 受限 `evaluateScript`（MV3 `chrome.scripting` + `world: "MAIN"`，注意页面 CSP 与注入面）
