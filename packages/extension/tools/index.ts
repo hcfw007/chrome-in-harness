@@ -1,6 +1,10 @@
+import {click, hover, scroll, typeText} from './interact'
 import {ping} from './ping'
-
-export type ToolHandler = (params: unknown) => unknown | Promise<unknown>
+import {screenshot} from './screenshot'
+import {navigate, snapshot} from './snapshot'
+import {tabClose, tabList, tabNew, tabSelect} from './tabs'
+import {setGroupsState} from '../lib/tab-group'
+import type {ToolHandler} from './types'
 
 const registry = new Map<string, ToolHandler>()
 
@@ -17,7 +21,27 @@ export async function dispatch(name: string, params: unknown): Promise<unknown> 
   if (handler === undefined) {
     throw new Error(`Unknown tool "${name}"`)
   }
-  return handler(params)
+  if (name === 'ping') return handler(params)
+  await setGroupsState('busy')
+  try {
+    const result = await handler(params)
+    void setGroupsState('done')
+    return result
+  } catch (error) {
+    void setGroupsState('error')
+    throw error
+  }
 }
 
 register('ping', ping)
+register('navigate', navigate)
+register('snapshot', snapshot)
+register('click', click)
+register('hover', hover)
+register('type', typeText)
+register('scroll', scroll)
+register('screenshot', screenshot)
+register('tab_list', tabList)
+register('tab_new', tabNew)
+register('tab_select', tabSelect)
+register('tab_close', tabClose)
