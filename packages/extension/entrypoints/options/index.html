@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Claude in Chrome MCP — 域名白名单</title>
+    <style>
+      body { font: 14px/1.6 system-ui, sans-serif; max-width: 560px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+      h1 { font-size: 1.2rem; }
+      p.hint { color: #555; }
+      textarea { width: 100%; height: 180px; font: 13px ui-monospace, monospace; padding: .5rem; box-sizing: border-box; }
+      button { margin-top: .75rem; padding: .4rem 1.2rem; cursor: pointer; }
+      #status { margin-top: .6rem; white-space: pre-line; }
+      #status.ok { color: #1a7f37; }
+      #status.err { color: #c0392b; }
+    </style>
+  </head>
+  <body>
+    <h1>域名白名单</h1>
+    <p class="hint">每行一个域名。规则 example.com 匹配自身与任意深度子域；不在名单内的域名一律拒绝操作。</p>
+    <textarea id="domains" placeholder="example.com&#10;wikipedia.org"></textarea>
+    <button id="save">保存</button>
+    <div id="status"></div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
