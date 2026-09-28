@@ -85,3 +85,5 @@ export function parseExtensionMessage(raw: string): WsExtensionMessage | undefin
   if (isWsResponse(parsed)) return parsed
   return undefined
 }
+
+export * from './tools.js'
