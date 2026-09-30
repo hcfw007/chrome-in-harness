@@ -123,8 +123,15 @@ const wait = defineTool({
   title: 'Wait for a condition',
   description:
     'Wait until a condition holds on the page: text appears in the body, a CSS selector matches, or the URL contains a substring. Exactly one condition per call. Returns {matched, timedOut} — a timeout is not an error; snapshot afterwards to see the current state.',
+  // 注册无 refine 的 shape（refine 会破坏 tools/list 的 JSON schema）；三选一的约束在 run 里落地。
   schema: waitParamsShape,
   async run(args, call) {
+    const conditions = [args.text, args.selector, args.urlContains].filter(
+      (v) => v !== undefined,
+    ).length
+    if (conditions !== 1) {
+      throw new Error(`exactly one of text / selector / urlContains is required (got ${conditions})`)
+    }
     const result = await callBridge(call, 'wait', args, waitResult)
     if (result.matched) return toolText('Condition matched.')
     return toolText('Timed out after waiting; condition not met. Take a snapshot to see the current state.')

@@ -87,6 +87,22 @@ describe('browser defs', () => {
     const fake = fakeBridge(new Error('STALE_REF: ref e1 is stale'))
     await expect(run(byName('click'), {ref: 'e1'}, fake.call)).rejects.toThrow('STALE_REF')
   })
+
+  test('wait rejects zero or multiple conditions before calling the bridge', async () => {
+    const fake = fakeBridge({matched: true, timedOut: false})
+    await expect(run(byName('wait'), {}, fake.call)).rejects.toThrow('exactly one')
+    await expect(
+      run(byName('wait'), {text: 'a', selector: '#x'}, fake.call),
+    ).rejects.toThrow('exactly one')
+    expect(fake.received).toHaveLength(0)
+  })
+
+  test('wait forwards a single condition and renders matched', async () => {
+    const fake = fakeBridge({matched: true, timedOut: false})
+    const content = await run(byName('wait'), {text: 'hello'}, fake.call)
+    expect(fake.received).toEqual([{tool: 'wait', params: {text: 'hello'}}])
+    expect(content).toEqual([{type: 'text', text: 'Condition matched.'}])
+  })
 })
 
 describe('tab defs', () => {
