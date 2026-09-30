@@ -10,7 +10,7 @@
     "dev:server": "npm run build -w @chrome-in-harness/protocol && npm run dev -w @chrome-in-harness/server",
     "build:extension": "npm run build -w @chrome-in-harness/protocol && npm run build -w @chrome-in-harness/extension",
     "build": "npm run build -w @chrome-in-harness/protocol && npm run build -w @chrome-in-harness/server && npm run build -w @chrome-in-harness/extension && npm run build -w @chrome-in-harness/launcher",
-    "test": "npm run build -w @chrome-in-harness/protocol && npm run test -w @chrome-in-harness/protocol && npm run test -w @chrome-in-harness/server && npm run test -w @chrome-in-harness/extension && npm run test -w @chrome-in-harness/launcher",
+    "test": "npm run build -w @chrome-in-harness/protocol && npm run test -w @chrome-in-harness/protocol && npm run test -w @chrome-in-harness/server && npm run build -w @chrome-in-harness/extension && npm run test -w @chrome-in-harness/extension && npm run test -w @chrome-in-harness/launcher",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "pack": "npm run build -w @chrome-in-harness/protocol && npm run build -w @chrome-in-harness/server && npm run pack -w @chrome-in-harness/server && npm run pack -w @chrome-in-harness/protocol && npm run pack -w @chrome-in-harness/launcher"
