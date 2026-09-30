@@ -1,6 +1,6 @@
 /** SW 入口：WS 重连、keepalive、CDP/ref 生命周期事件。监听一律顶层同步注册。 */
-import {initCdpListeners} from '../lib/cdp'
-import {dropCollectors} from '../lib/cdp-commands'
+import {initCdpListeners, onAttach} from '../lib/cdp'
+import {dropCollectors, ensureCollectors} from '../lib/cdp-commands'
 import {connect} from '../lib/connection'
 import {consoleBuffer} from '../lib/console-buffer'
 import {networkBuffer} from '../lib/network-buffer'
@@ -17,6 +17,12 @@ export default defineBackground(() => {
     if (alarm.name === KEEPALIVE_ALARM) {
       connect()
     }
+  })
+
+  // tab 一旦 attach，立即 enable Runtime/Network/Log 并开始采集——
+  // 缓冲从首次 attach 起积累，此前的消息不可得。
+  onAttach((tabId) => {
+    ensureCollectors(tabId)
   })
 
   // 调试会话被强制分离（DevTools 接管 / 用户取消 / tab 关闭）：

@@ -10,6 +10,18 @@ const sessions = new Map<number, true>()
 const eventWaiters = new Map<string, Array<(payload: unknown) => void>>()
 const eventSubscribers = new Map<string, Array<(params: unknown) => void>>()
 
+/** attach（含复用历史会话）成功后的通知钩子——采集器在此 enable CDP domain 并订阅事件。 */
+type AttachHook = (tabId: number) => void
+const attachHooks: AttachHook[] = []
+
+export function onAttach(hook: AttachHook): void {
+  attachHooks.push(hook)
+}
+
+function fireAttachHooks(tabId: number): void {
+  for (const hook of attachHooks) hook(tabId)
+}
+
 function eventKey(tabId: number, method: string): string {
   return `${tabId}:${method}`
 }
@@ -50,6 +62,7 @@ function attach(tabId: number): Promise<void> {
         return
       }
       sessions.set(tabId, true)
+      fireAttachHooks(tabId)
       resolve()
     })
   })
@@ -69,6 +82,7 @@ export async function ensureAttached(tabId: number): Promise<void> {
   if (attached) {
     // 可能是我们的历史会话，也可能是 DevTools 占用 —— 后者由 send 报错透出
     sessions.set(tabId, true)
+    fireAttachHooks(tabId)
     return
   }
   await attach(tabId)
@@ -129,8 +143,20 @@ export function subscribeEvents(tabId: number, method: string, cb: (params: unkn
   eventSubscribers.set(key, list)
 }
 
+/** 清掉某 tab 的所有订阅与等待者（detach 时调用，避免重连后重复订阅累积）。 */
+export function clearTabState(tabId: number): void {
+  const prefix = `${tabId}:`
+  for (const key of [...eventSubscribers.keys()]) {
+    if (key.startsWith(prefix)) eventSubscribers.delete(key)
+  }
+  for (const key of [...eventWaiters.keys()]) {
+    if (key.startsWith(prefix)) eventWaiters.delete(key)
+  }
+}
+
 export async function detach(tabId: number): Promise<void> {
   sessions.delete(tabId)
+  clearTabState(tabId)
   await new Promise<void>((resolve) => {
     chrome.debugger.detach({tabId}, () => resolve())
   })

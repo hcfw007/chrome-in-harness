@@ -57,9 +57,12 @@ function serializeArgs(args: unknown): string {
 /** 每个会话注册一次 console / network 采集订阅（幂等）。 */
 const collectors = new Map<number, true>()
 
-export function ensureCollectors(tabId: number): void {
-  if (collectors.has(tabId)) return
-  collectors.set(tabId, true)
+/** 清 enable 缓存（detach 后重 attach 需重新 enable）。 */
+export function forgetDomains(tabId: number): void {
+  enabledDomains.delete(tabId)
+}
+
+function attachSubscribers(tabId: number): void {
   subscribeEvents(tabId, 'Runtime.consoleAPICalled', (raw) => {
     const params = raw as {type?: string; args?: unknown; timestamp?: number}
     consoleBuffer.append(tabId, {
@@ -104,9 +107,30 @@ export function ensureCollectors(tabId: number): void {
   })
 }
 
+/**
+ * 启动采集：订阅事件**并 enable 对应 CDP domain**。
+ * enable 是必须的——CDP 在 domain 未 enable 时不派发事件，只订阅会得到空缓冲。
+ * 幂等；attach 复用（含 SW 被杀后惰性重查）时也需调用，故按 tab 记忆。
+ */
+export function ensureCollectors(tabId: number): void {
+  if (collectors.has(tabId)) return
+  collectors.set(tabId, true)
+  attachSubscribers(tabId)
+  void Promise.all([
+    enableOnce(tabId, 'Runtime', 'Runtime.enable'),
+    enableOnce(tabId, 'Network', 'Network.enable'),
+    enableOnce(tabId, 'Log', 'Log.enable'),
+  ]).catch((error: unknown) => {
+    console.warn('[cdp] enabling collectors failed:', error instanceof Error ? error.message : error)
+    // 失败则撤销记忆，下次工具调用重试
+    collectors.delete(tabId)
+  })
+}
+
 /** 清采集注册（detach / tab 关闭时；下次 attach 会重新注册）。 */
 export function dropCollectors(tabId: number): void {
   collectors.delete(tabId)
+  forgetDomains(tabId)
 }
 
 export async function getFullAxTree(tabId: number): Promise<AxNode[]> {
