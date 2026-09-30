@@ -2,7 +2,7 @@ import {setGroupsState} from '../lib/tab-group'
 import {addAllowlistDomain} from './allowlist'
 import {readConsole, readNetwork} from './debug'
 import {evaluateScript} from './evaluate'
-import {click, hover, scroll, typeText} from './interact'
+import {click, clickAt, hover, scroll, typeText} from './interact'
 import {ping} from './ping'
 import {requestPermission} from './request-permission'
 import {screenshot} from './screenshot'
@@ -42,6 +42,7 @@ register('ping', ping)
 register('navigate', navigate)
 register('snapshot', snapshot)
 register('click', click)
+register('click_at', clickAt)
 register('hover', hover)
 register('type', typeText)
 register('scroll', scroll)

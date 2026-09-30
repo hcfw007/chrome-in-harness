@@ -67,6 +67,16 @@ describe('browser defs', () => {
     expect(content).toEqual([{type: 'text', text: 'Clicked e3'}])
   })
 
+  test('click_at forwards coordinates and confirms', async () => {
+    const fake = fakeBridge({})
+    const content = await run(byName('click_at'), {x: 2466, y: 22, coordinates: true}, fake.call)
+    expect(fake.received[0]).toEqual({
+      tool: 'click_at',
+      params: {x: 2466, y: 22, coordinates: true},
+    })
+    expect(content).toEqual([{type: 'text', text: 'Clicked at (2466, 22)'}])
+  })
+
   test('screenshot returns MCP image content with the base64 payload', async () => {
     const fake = fakeBridge({data: 'aGVsbG8=', mimeType: 'image/png'})
     const content = await run(byName('screenshot'), {}, fake.call)

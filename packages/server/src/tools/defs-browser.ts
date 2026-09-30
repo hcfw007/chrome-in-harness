@@ -1,5 +1,6 @@
 /** 浏览器操作工具：navigate / snapshot / click / hover / type / scroll / screenshot。 */
 import {
+  clickAtParams,
   clickParams,
   hoverParams,
   waitParamsShape,
@@ -64,6 +65,23 @@ const hover = defineTool({
   },
 })
 
+const clickAt = defineTool({
+  name: 'click_at',
+  title: 'Click at viewport coordinates',
+  description:
+    'Click at raw viewport coordinates (CSS pixels). Escape hatch for targets a ref cannot reach: ' +
+    'elements inside iframes/Canvas, and icon-only containers with no accessible name (e.g. a "..." menu). ' +
+    'Requires coordinates:true to signal intent. ' +
+    'To find coordinates, first locate the element with evaluate_script, e.g. ' +
+    'evaluate_script expression `(()=>{const r=document.querySelector(".some-btn").getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`, ' +
+    'then click_at with that x/y. Prefer click(ref) when a ref exists.',
+  schema: clickAtParams.shape,
+  async run(args, call) {
+    await callBridge(call, 'click_at', args, okResult)
+    return toolText(`Clicked at (${args.x}, ${args.y})`)
+  },
+})
+
 const type = defineTool({
   name: 'type',
   title: 'Type text into an element by ref',
@@ -118,6 +136,7 @@ export const BROWSER_TOOL_DEFS: readonly ToolDef[] = [
   wait,
   snapshot,
   click,
+  clickAt,
   hover,
   type,
   scroll,

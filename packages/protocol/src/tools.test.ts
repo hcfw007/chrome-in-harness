@@ -1,6 +1,7 @@
 import {describe, expect, test} from 'vitest'
 import {
   addAllowlistDomainParams,
+  clickAtParams,
   clickParams,
   navigateParams,
   readConsoleParams,
@@ -31,6 +32,14 @@ describe('params schemas', () => {
     expect(clickParams.safeParse({ref: '012'}).success).toBe(false)
     expect(clickParams.safeParse({ref: 'x1'}).success).toBe(false)
     expect(clickParams.safeParse({}).success).toBe(false)
+  })
+
+  test('click_at requires finite coords and the coordinates:true intent flag', () => {
+    expect(clickAtParams.safeParse({x: 100, y: 20, coordinates: true}).success).toBe(true)
+    expect(clickAtParams.safeParse({x: 100, y: 20}).success).toBe(false)
+    expect(clickAtParams.safeParse({x: 100, y: 20, coordinates: false}).success).toBe(false)
+    expect(clickAtParams.safeParse({x: Number.NaN, y: 20, coordinates: true}).success).toBe(false)
+    expect(clickAtParams.safeParse({x: 100, y: Number.POSITIVE_INFINITY, coordinates: true}).success).toBe(false)
   })
 
   test('type bounds text length and keeps submit optional', () => {

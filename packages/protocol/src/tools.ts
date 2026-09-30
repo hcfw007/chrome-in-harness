@@ -37,6 +37,17 @@ export const clickParams = z.object({
   ...tabIdField,
 })
 
+/**
+ * 坐标点击：ref 无法命中时（iframe/Canvas/无 ref 的 icon-only 容器等）的兜底。
+ * 坐标是视口 CSS 像素；必须显式传 `coordinates: true` 作为意图标记。
+ */
+export const clickAtParams = z.object({
+  x: z.number().finite(),
+  y: z.number().finite(),
+  coordinates: z.literal(true),
+  ...tabIdField,
+})
+
 export const hoverParams = z.object({
   ref: z.string().regex(REF_PATTERN),
   ...tabIdField,
@@ -220,6 +231,7 @@ export const TOOL_NAMES = [
   'add_allowlist_domain',
   'evaluate_script',
   'request_permission',
+  'click_at',
 ] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]

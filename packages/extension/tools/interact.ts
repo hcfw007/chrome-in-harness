@@ -2,6 +2,7 @@
 import {TOOL_ERROR_CODES} from '@chrome-in-harness/protocol'
 import {ensureAttached} from '../lib/cdp'
 import {
+  activateTab,
   dispatchClick,
   dispatchHover,
   dispatchWheel,
@@ -15,6 +16,17 @@ import {refStore} from '../lib/ref-store'
 import {authorizeTab, toolError} from './access'
 
 import type {ToolHandler} from './types'
+
+/**
+ * 输入类工具的公共前置：解析 tab → 激活为可见 → attach。
+ * 后台 tab 上 CDP `Input.*` 会被静默丢弃，必须先把 tab 激活到前台。
+ */
+async function prepareInputTab(tabId?: number): Promise<{tabId: number; url: string}> {
+  const target = await authorizeTab(tabId)
+  await activateTab(target.tabId)
+  await ensureAttached(target.tabId)
+  return target
+}
 
 /** CDP 对失效 backendNodeId 的报错统一映射为 STALE_REF 文案，模型可据此自纠。 */
 function isStaleNodeError(error: unknown): boolean {
@@ -61,18 +73,27 @@ async function locate(tabId: number, backendDOMNodeId: number): Promise<{x: numb
 
 export const click: ToolHandler = async (params) => {
   const {ref, tabId} = params as {ref: string; tabId?: number}
-  const target = await authorizeTab(tabId)
-  await ensureAttached(target.tabId)
+  const target = await prepareInputTab(tabId)
   const {backendDOMNodeId} = await resolveRef(target.tabId, ref)
   const {x, y} = await locate(target.tabId, backendDOMNodeId)
   await dispatchClick(target.tabId, x, y)
   return {}
 }
 
+/**
+ * 坐标点击（ref 命中不了时的兜底：iframe / Canvas / 无 ref 的 icon-only 容器）。
+ * 坐标是视口 CSS 像素；直接走 CDP Input.*，不做元素解析。
+ */
+export const clickAt: ToolHandler = async (params) => {
+  const {x, y, tabId} = params as {x: number; y: number; tabId?: number}
+  const target = await prepareInputTab(tabId)
+  await dispatchClick(target.tabId, x, y)
+  return {}
+}
+
 export const hover: ToolHandler = async (params) => {
   const {ref, tabId} = params as {ref: string; tabId?: number}
-  const target = await authorizeTab(tabId)
-  await ensureAttached(target.tabId)
+  const target = await prepareInputTab(tabId)
   const {backendDOMNodeId} = await resolveRef(target.tabId, ref)
   const {x, y} = await elementCenterSafe(target.tabId, backendDOMNodeId)
   await dispatchHover(target.tabId, x, y)
@@ -96,8 +117,7 @@ async function elementCenterSafe(tabId: number, backendDOMNodeId: number): Promi
 
 export const typeText: ToolHandler = async (params) => {
   const {ref, text, submit, tabId} = params as {ref: string; text: string; submit?: boolean; tabId?: number}
-  const target = await authorizeTab(tabId)
-  await ensureAttached(target.tabId)
+  const target = await prepareInputTab(tabId)
   const {backendDOMNodeId} = await resolveRef(target.tabId, ref)
   const {x, y} = await locate(target.tabId, backendDOMNodeId)
   await dispatchClick(target.tabId, x, y)
@@ -113,8 +133,7 @@ export const scroll: ToolHandler = async (params) => {
     ref?: string
     tabId?: number
   }
-  const target = await authorizeTab(tabId)
-  await ensureAttached(target.tabId)
+  const target = await prepareInputTab(tabId)
   const distance = amount ?? 600
   const [dx, dy] =
     direction === 'left'

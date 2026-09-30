@@ -158,6 +158,20 @@ export async function getTabTitle(tabId: number): Promise<string | undefined> {
   return tab?.title
 }
 
+/**
+ * 让目标 tab 在其窗口内变为活动/可见。
+ * 后台 tab 上 CDP `Input.*` 会被静默丢弃（visibility:hidden 时页面不处理输入），
+ * 表现为「点了没反应」。所有输入类工具在派发前调用此函数。
+ */
+export async function activateTab(tabId: number): Promise<void> {
+  try {
+    const tab = await chrome.tabs.get(tabId)
+    if (tab.active !== true) await chrome.tabs.update(tabId, {active: true})
+  } catch (error) {
+    console.warn('[cdp] activateTab failed:', error instanceof Error ? error.message : error)
+  }
+}
+
 export async function scrollIntoViewIfNeeded(tabId: number, backendNodeId: number): Promise<void> {
   await send(tabId, 'DOM.scrollIntoViewIfNeeded', {backendNodeId})
 }
