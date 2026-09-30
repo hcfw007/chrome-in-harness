@@ -58,22 +58,38 @@ function clip(text: string, maxLen: number): string {
 }
 
 function isRefCandidate(node: AxNode): boolean {
-  return INTERACTIVE_ROLES.has(node.role) || node.clickable || ANCHOR_ROLES.has(node.role)
+  return (
+    INTERACTIVE_ROLES.has(node.role) ||
+    node.clickable ||
+    // 无名但带 aria-haspopup 的 icon-only 控件（如「...」菜单按钮）
+    node.hasPopup ||
+    ANCHOR_ROLES.has(node.role)
+  )
 }
 
-/** 无名 generic/none：单子或无子时压缩掉（不产行不占 ref）。 */
+/**
+ * 无名 generic/none：单子或无子时压缩掉（不产行不占 ref）。
+ * 例外：本身是 ref 候选（clickable）时绝不压缩——否则像「...」这类
+ * icon-only 操作按钮会从快照里消失，模型只剩旁边同名/无名节点可点，必然点错。
+ */
 function isCollapsible(node: AxNode): boolean {
   return (
     CONTAINER_ROLES.has(node.role) &&
+    !isRefCandidate(node) &&
     node.name.length === 0 &&
     node.value.length === 0 &&
     node.childIds.length <= 1
   )
 }
 
-/** 无名 generic/none 但有多个子节点：本行不渲染，子级在 depth+1 正常渲染。 */
+/** 无名 generic/none 但有多个子节点：本行不渲染，子级在 depth+1 正常渲染。同样跳过 ref 候选。 */
 function isGhostContainer(node: AxNode): boolean {
-  return CONTAINER_ROLES.has(node.role) && node.name.length === 0 && node.value.length === 0
+  return (
+    CONTAINER_ROLES.has(node.role) &&
+    !isRefCandidate(node) &&
+    node.name.length === 0 &&
+    node.value.length === 0
+  )
 }
 
 function renderLine(node: AxNode, depth: number, state: RenderState): void {

@@ -19,6 +19,8 @@ export interface AxNode {
   readonly selected: boolean | undefined
   readonly level: number | undefined
   readonly clickable: boolean
+  readonly focusable: boolean
+  readonly hasPopup: boolean
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -88,6 +90,8 @@ function parseNode(raw: unknown): AxNode | undefined {
     selected: optBoolProp(properties, 'selected'),
     level: numProp(properties, 'level'),
     clickable: boolProp(properties, 'clickable'),
+    focusable: boolProp(properties, 'focusable'),
+    hasPopup: tokenProp(properties, 'hasPopup') !== undefined,
   }
 }
 

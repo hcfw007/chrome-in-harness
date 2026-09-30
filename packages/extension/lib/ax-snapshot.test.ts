@@ -25,6 +25,8 @@ function node(partial: Partial<Omit<AxNode, 'childIds'>> & {childIds?: string[];
     selected: undefined,
     level: undefined,
     clickable: false,
+    focusable: false,
+    hasPopup: false,
     ...partial,
   }
 }
@@ -165,6 +167,48 @@ describe('renderAxSnapshot', () => {
     const result = renderAxSnapshot(tree)
     expect(result.refs).toHaveLength(1)
     expect(result.text).toContain('[ref=e1]')
+  })
+
+  test('unnamed clickable generic container survives compaction and gets a ref', () => {
+    // 回归：icon-only 操作按钮（如「...」）是无 accessible name 的 clickable 容器，
+    // 不能被 isCollapsible/isGhostContainer 吞掉，否则模型只能点到旁边同名/无名节点。
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'root'}),
+      node({nodeId: '1', role: 'generic', clickable: true, backendDOMNodeId: 41}),
+      node({nodeId: '2', role: 'generic', clickable: true, backendDOMNodeId: 42}),
+      node({nodeId: '3', role: 'button', name: '评论', backendDOMNodeId: 43}),
+    ]
+    // root 下：无名 clickable 容器(1) 与 评论按钮(3)；容器内还有无名 clickable(2)
+    tree[0]!.childIds.push('1', '3')
+    tree[1]!.childIds.push('2')
+    const result = renderAxSnapshot(tree)
+    expect(result.refs.map((r) => r.backendDOMNodeId)).toEqual([41, 42, 43])
+    expect(result.text).toContain('[ref=e1]')
+    expect(result.text).toContain('[ref=e2]')
+  })
+
+  test('non-clickable unnamed generic containers are still compacted', () => {
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'root'}),
+      node({nodeId: '1', role: 'generic'}),
+      node({nodeId: '2', role: 'button', name: 'deep', backendDOMNodeId: 51}),
+    ]
+    tree[0]!.childIds.push('1')
+    tree[1]!.childIds.push('2')
+    const result = renderAxSnapshot(tree)
+    expect(result.text).toBe(['- RootWebArea "root"', '  - button "deep" [ref=e1]'].join('\n'))
+  })
+
+  test('unnamed focusable/haspopup icon controls get a ref', () => {
+    // 回归：「...」菜单按钮在 AX 里是无名的 image/focusable + aria-haspopup
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'root'}),
+      node({nodeId: '1', role: 'image', focusable: true, hasPopup: true, backendDOMNodeId: 61}),
+      node({nodeId: '2', role: 'image', focusable: false, backendDOMNodeId: 62}),
+    ]
+    tree[0]!.childIds.push('1', '2')
+    const result = renderAxSnapshot(tree)
+    expect(result.refs.map((r) => r.backendDOMNodeId)).toEqual([61])
   })
 
   test('depth limit cuts with a marker', () => {
