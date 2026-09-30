@@ -73,19 +73,28 @@ async function detectClients(): Promise<void> {
   }
 }
 
-/** 检测扩展是否已装：通过 MCP tools/ping 验证全链路（server+扩展）。 */
+/** 检测扩展是否已装：通过 MCP tools/call ping 验证全链路（server+扩展）。 */
 async function pingExtension(): Promise<boolean> {
   try {
     const res = await fetch(SERVER_URL, {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({jsonrpc: '2.0', id: 2, method: 'tools/call', params: {name: 'ping', arguments: {}}}),
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: {name: 'ping', arguments: {}},
+      }),
       signal: AbortSignal.timeout(3000),
     })
     if (!res.ok) return false
     const body = (await res.json()) as {result?: {content?: Array<{text?: string}>}}
     const text = body.result?.content?.[0]?.text ?? ''
-    return text.includes('pong') || text.toLowerCase().includes('extension')
+    // ping 成功返回 {version, userAgent}
+    return text.includes('version') || text.includes('userAgent')
   } catch {
     return false
   }
