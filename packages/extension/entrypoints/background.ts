@@ -41,10 +41,5 @@ export default defineBackground(() => {
     dropCollectors(tabId)
   })
 
-  // 首次安装直接打开 options 页，引导配置白名单（空名单 = 拒绝全部）
-  chrome.runtime.onInstalled.addListener(() => {
-    void chrome.runtime.openOptionsPage()
-  })
-
   console.log('[background] Chrome in Harness service worker started')
 })
