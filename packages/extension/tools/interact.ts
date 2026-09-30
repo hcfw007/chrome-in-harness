@@ -31,7 +31,14 @@ async function prepareInputTab(tabId?: number): Promise<{tabId: number; url: str
 /** CDP 对失效 backendNodeId 的报错统一映射为 STALE_REF 文案，模型可据此自纠。 */
 function isStaleNodeError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
-  return message.includes('No node with given id')
+  // 'No node with given id'：节点已从 DOM 移除但 CDP 仍持有旧 id；
+  // 'Node is detached from document' / 'Node with given id does not belong to the document'：
+  // 元素被移除或替换（SPA 重渲染常见），同样属于 ref 失效，应引导重新 snapshot。
+  return (
+    message.includes('No node with given id') ||
+    message.includes('Node is detached from document') ||
+    message.includes('does not belong to the document')
+  )
 }
 
 interface ResolvedRef {
