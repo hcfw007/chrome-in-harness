@@ -77,7 +77,7 @@ describe('P3 schemas', () => {
     expect(waitParams.safeParse({urlContains: '/docs'}).success).toBe(true)
     expect(waitParams.safeParse({}).success).toBe(false)
     expect(waitParams.safeParse({text: 'a', selector: '#x'}).success).toBe(false)
-    expect(waitParams.safeParse({text: '', }).success).toBe(false)
+    expect(waitParams.safeParse({text: ''}).success).toBe(false)
   })
 
   test('wait bounds timeoutMs', () => {

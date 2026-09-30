@@ -2,10 +2,10 @@
 
 import {parseAxNodes} from './ax-types'
 import type {AxNode} from './ax-types'
+import {send, subscribeEvents, waitForEvent} from './cdp'
 import {consoleBuffer} from './console-buffer'
 import type {ConsoleLevel} from './console-buffer'
 import {networkBuffer} from './network-buffer'
-import {send, subscribeEvents, waitForEvent} from './cdp'
 
 /** 每个 debugger 会话 enable 一次的 domain 集合（SW 内存级）。 */
 const enabledDomains = new Map<number, Set<string>>()
