@@ -1,0 +1,53 @@
+name: Publish
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Publish @chrome-in-harness/protocol
+        run: npm publish --workspace @chrome-in-harness/protocol --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish @chrome-in-harness/server
+        run: npm publish --workspace @chrome-in-harness/server --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish @chrome-in-harness/launcher
+        run: npm publish --workspace @chrome-in-harness/launcher --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [npm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w @chrome-in-harness/extension
+      - name: Package extension zip
+        run: |
+          cd packages/extension/.output/chrome-mv3
+          zip -r ../../../chrome-in-harness-extension.zip . -x '.*'
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: chrome-in-harness-extension.zip
+          generate_release_notes: true

@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import {createServer} from 'node:http'
 import {handleMcpRequest} from './mcp.js'
 import {WsBridge} from './ws-bridge.js'

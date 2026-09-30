@@ -1,18 +1,19 @@
 {
   "name": "chrome-in-harness",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Browser MCP: control a real Chrome profile via a MV3 extension bridged to a local MCP server",
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "dev:server": "npm run build -w @cic/protocol && npm run dev -w @cic/server",
-    "build:extension": "npm run build -w @cic/protocol && npm run build -w @cic/extension",
-    "build": "npm run build -w @cic/protocol && npm run build -w @cic/server && npm run build -w @cic/extension",
-    "test": "npm run build -w @cic/protocol && npm run test -w @cic/protocol && npm run test -w @cic/server && npm run test -w @cic/extension",
+    "dev:server": "npm run build -w @chrome-in-harness/protocol && npm run dev -w @chrome-in-harness/server",
+    "build:extension": "npm run build -w @chrome-in-harness/protocol && npm run build -w @chrome-in-harness/extension",
+    "build": "npm run build -w @chrome-in-harness/protocol && npm run build -w @chrome-in-harness/server && npm run build -w @chrome-in-harness/extension && npm run build -w @chrome-in-harness/launcher",
+    "test": "npm run build -w @chrome-in-harness/protocol && npm run test -w @chrome-in-harness/protocol && npm run test -w @chrome-in-harness/server && npm run test -w @chrome-in-harness/extension && npm run test -w @chrome-in-harness/launcher",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "pack": "npm run build -w @chrome-in-harness/protocol && npm run build -w @chrome-in-harness/server && npm run pack -w @chrome-in-harness/server && npm run pack -w @chrome-in-harness/protocol && npm run pack -w @chrome-in-harness/launcher"
   },
   "engines": {
     "node": ">=20"
@@ -20,5 +21,10 @@
   "devDependencies": {
     "@ddyscn/lint-config": "^0.0.2",
     "eslint": "^10.11.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hcfw007/chrome-in-harness.git"
   }
 }

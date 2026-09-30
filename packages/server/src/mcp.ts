@@ -5,7 +5,7 @@ import {registerAllTools} from './tools/index.js'
 import type {WsBridge} from './ws-bridge.js'
 
 const SERVER_NAME = 'chrome-in-harness'
-const SERVER_VERSION = '0.2.0'
+const SERVER_VERSION = '0.1.0'
 const MAX_BODY_BYTES = 1024 * 1024
 
 const PARSE_ERROR = -32700

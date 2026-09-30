@@ -9,11 +9,11 @@ Chrome 扩展 (MV3, WXT)  --WebSocket client-->  本地 server (Node, ws on 127.
                                                     |-- Streamable HTTP MCP --> 任意 MCP 客户端
 ```
 
-三个包：`@cic/protocol`（两端共用的 WS 协议定义与类型守卫）、`@cic/server`、`@cic/extension`。
+三个包：`@chrome-in-harness/protocol`（两端共用的 WS 协议定义与类型守卫）、`@chrome-in-harness/server`、`@chrome-in-harness/extension`。
 
 - 扩展 service worker 作为 WS **client** 主动连 `ws://127.0.0.1:8765`（无需 Chrome 额外暴露端口，连接由扩展发起）
 - server 在 `http://127.0.0.1:12306/mcp` 暴露 MCP（Streamable HTTP，无状态模式）；收到 tool call 后通过 WS 转发给扩展，按消息 `id` 关联等待响应，超时 30s
-- WS 协议 v1：请求 `{ v: 1, id, tool, params }`，响应 `{ v: 1, id, ok, result | error }`；定义与守卫集中在 `@cic/protocol`，server 与扩展共用一份
+- WS 协议 v1：请求 `{ v: 1, id, tool, params }`，响应 `{ v: 1, id, ok, result | error }`；定义与守卫集中在 `@chrome-in-harness/protocol`，server 与扩展共用一份
 
 ## 安全边界
 
@@ -28,24 +28,57 @@ Chrome 扩展 (MV3, WXT)  --WebSocket client-->  本地 server (Node, ws on 127.
 - [x] MCP HTTP 端点（Streamable HTTP，stateless）
 - [x] 工具：`ping`（返回扩展版本 + userAgent，验证全链路连通）
 - [x] WS Origin 鉴权 + MCP DNS rebinding 防护
-- [x] 协议单一来源（`@cic/protocol`）、单测（vitest，三包）、ESLint（`@ddyscn/lint-config`）
+- [x] 协议单一来源（`@chrome-in-harness/protocol`）、单测（vitest，三包）、ESLint（`@ddyscn/lint-config`）
 - [x] Phase 2：a11y 快照 + ref 交互 + 域名白名单（见下）
 - [x] Phase 3a：`read_console` / `read_network` / `wait` / 运行时白名单授权 + CI（见下）
-- [ ] Phase 3b：受限 `evaluateScript`、白名单弹窗授权形态
+- [x] Phase 3b：受限 `evaluate_script`、权限弹窗授权 `request_permission`（见下）
 
 ## Phase 2：快照 + ref 交互 + 白名单
 
-**工具集**（16 个）：`ping`、`navigate`、`snapshot`、`click`、`hover`、`type`、`scroll`、`screenshot`、`tab_list`、`tab_new`、`tab_select`、`tab_close`、`read_console`、`read_network`、`wait`、`add_allowlist_domain`。
+**工具集**（18 个）：`ping`、`navigate`、`snapshot`、`click`、`hover`、`type`、`scroll`、`screenshot`、`tab_list`、`tab_new`、`tab_select`、`tab_close`、`read_console`、`read_network`、`wait`、`add_allowlist_domain`、`evaluate_script`、`request_permission`。
 
 - **read_console / read_network**：CDP 采集的 console 与网络请求元数据（响应体不采集）。缓冲从 tab 首次被工具 attach 起积累
 - **wait**：等待文本 / CSS 选择器 / URL 子串出现（页面内 Promise 轮询，默认 8s 上限 30s），超时返回 `{matched:false}` 而非报错
 - **add_allowlist_domain**：运行时扩白名单。仅在用户明确要求时调用——对话即授权界面
+- **evaluate_script**：受限 `Runtime.evaluate` 执行页面上下文 JS。黑名单拒绝网络访问（fetch/XHR/WebSocket/sendBeacon）、eval/Function、导航（location/window.open）、document.write、debugger 与 `chrome.*`；`awaitPromise:true` 需 async IIFE；结果 JSON 序列化超限截断
+- **request_permission**：针对域名发起 `chrome.permissions.request` 原生授权弹窗，授予后同步写入 storage 白名单。仅当用户明确要求时调用
 
 - **snapshot**：`chrome.debugger` + CDP `Accessibility.getFullAXTree`，渲染成 Playwright ariaSnapshot 风格的缩进文本，交互元素带 `[ref=eN]`；click/hover/type/scroll 只接受 ref，杜绝选择器漂移
 - **ref 生命周期**：ref 绑定 tab 的最近一次快照；导航/关 tab/debugger 分离即失效；SPA 重渲染导致的节点失效在 CDP 层映射为 `STALE_REF`；SW 被杀后报 `NO_SNAPSHOT` 引导重新 snapshot
 - **真实输入**：点击/输入走 CDP `Input.*`（isTrusted=true），与真人操作无法区分
 - **域名白名单**：`chrome.storage.local` 持久化，扩展侧在 attach 前校验，空名单 = 拒绝全部；规则 `example.com` 匹配自身与任意深度子域；首次安装自动打开 options 页
 - **代价（已接受）**：attach 期间 Chrome 显示「正在调试」黄条；目标 tab 打开 DevTools 会顶掉扩展会话，工具报 `DEBUGGER_BUSY`，关闭 DevTools 后自动恢复
+
+## 安装与使用
+
+两种方式：**npm 快速安装**（推荐）或 **GitHub Release / 源码**。
+
+### npm 快速安装
+
+```bash
+# 1. 启动本地 server 并自动写入 opencode / .mcp.json 配置
+npx chrome-in-harness start
+
+# 2. 装扩展：Chrome 打开 chrome://extensions → 开发者模式 → 加载已解压的扩展程序
+#    选择 GitHub Releases 下载的 chrome-in-harness-extension.zip 解压目录，
+#    或本仓库 packages/extension/.output/chrome-mv3
+
+# 3. 自检全链路
+npx chrome-in-harness doctor
+```
+
+`npx chrome-in-harness start` 会：
+- 检测 server 是否已在运行（已运行则直接复用）
+- 启动本地 server（WS `127.0.0.1:8765` ↔ MCP `http://127.0.0.1:12306/mcp`）
+- 自动向 `~/.config/opencode/opencode.json` 写入 `chrome-in-harness` 的 remote MCP 条目
+
+然后在客户端里让模型调 `ping`，应返回扩展版本与 userAgent。
+
+### 发布渠道
+
+- **npm**：`@chrome-in-harness/server`（server，含 `chrome-in-harness-server` bin）、`@chrome-in-harness/launcher`（`chrome-in-harness` CLI）、`@chrome-in-harness/protocol`（协议类型）
+- **Chrome Web Store**：扩展以「Chrome in Harness」提交，权限与数据说明见 [docs/CWS_DISCLOSURE.md](docs/CWS_DISCLOSURE.md) 与 [docs/PRIVACY.md](docs/PRIVACY.md)
+- **GitHub Releases**：tag `v*` 自动触发 npm 发布 + 扩展 zip 打包（.github/workflows/publish.yml）
 
 ## 开发步骤
 
@@ -73,4 +106,4 @@ claude mcp add -s user chrome-in-harness --transport http http://127.0.0.1:12306
 
 ## Roadmap
 
-- **Phase 3** — 受限 `evaluateScript`（MV3 `chrome.scripting` + `world: "MAIN"`，注意页面 CSP 与注入面）
+- **Phase 4** — 非受限执行 / 页面交互增强：如需绕过受限 `evaluate_script`，再评估 `chrome.scripting` + `world: "MAIN"` 注入面与 CSP 兼容

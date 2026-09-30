@@ -1,8 +1,24 @@
 {
-  "name": "@cic/server",
-  "version": "0.2.0",
-  "private": true,
+  "name": "@chrome-in-harness/server",
+  "version": "0.1.0",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "chrome-in-harness-server": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
@@ -10,7 +26,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@cic/protocol": "*",
+    "@chrome-in-harness/protocol": "^0.1.0",
     "@modelcontextprotocol/sdk": "^1.19.0",
     "ws": "^8.18.3",
     "zod": "^3.25.76"
@@ -21,5 +37,10 @@
     "tsx": "^4.20.0",
     "typescript": "^5.6.3",
     "vitest": "^5.0.1"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hcfw007/chrome-in-harness.git"
   }
 }
