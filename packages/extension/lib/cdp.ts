@@ -8,6 +8,7 @@ import {TOOL_ERROR_CODES} from '@cic/protocol'
 /** 「扩展认为已 attach」的 tab 集合；SW 重启后用 getTargets 惰性重查。 */
 const sessions = new Map<number, true>()
 const eventWaiters = new Map<string, Array<(payload: unknown) => void>>()
+const eventSubscribers = new Map<string, Array<(params: unknown) => void>>()
 
 function eventKey(tabId: number, method: string): string {
   return `${tabId}:${method}`
@@ -26,7 +27,10 @@ export function initCdpListeners(onDetached: (tabId: number) => void): void {
   })
   chrome.debugger.onEvent.addListener((source, method, params) => {
     if (source.tabId === undefined) return
-    const waiters = eventWaiters.get(eventKey(source.tabId, method))
+    const key = eventKey(source.tabId, method)
+    // 持续订阅者（console/network 缓冲）先喂；一次性 waiter 后喂并清空
+    for (const cb of eventSubscribers.get(key) ?? []) cb(params)
+    const waiters = eventWaiters.get(key)
     if (waiters !== undefined && waiters.length > 0) {
       for (const wake of waiters.splice(0)) wake(params)
     }
@@ -115,6 +119,14 @@ export function waitForEvent(tabId: number, method: string, timeoutMs: number): 
     waiters.push(wake)
     eventWaiters.set(key, waiters)
   })
+}
+
+/** 注册某个 tab 某条 CDP 事件的持续订阅（console/network 缓冲用）。 */
+export function subscribeEvents(tabId: number, method: string, cb: (params: unknown) => void): void {
+  const key = eventKey(tabId, method)
+  const list = eventSubscribers.get(key) ?? []
+  list.push(cb)
+  eventSubscribers.set(key, list)
 }
 
 export async function detach(tabId: number): Promise<void> {

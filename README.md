@@ -1,12 +1,12 @@
-# claude-in-chrome-mcp
+# chrome-in-harness
 
-Claude-in-Chrome 风格的开源浏览器 MCP：通过 Chrome 扩展接管你**真实的 Chrome profile**（已登录态、cookie、插件环境都在），让 Claude Code 能直接驱动浏览器。非 sandbox 浏览器，非 headless 脚本方案。
+Claude-in-Chrome 风格的开源浏览器 MCP：通过 Chrome 扩展接管你**真实的 Chrome profile**（已登录态、cookie、插件环境都在），让任何 MCP 客户端（Claude Code / opencode 等）都能直接驱动浏览器。非 sandbox 浏览器，非 headless 脚本方案。
 
 ## 架构
 
 ```
 Chrome 扩展 (MV3, WXT)  --WebSocket client-->  本地 server (Node, ws on 127.0.0.1:8765)
-                                                    |-- Streamable HTTP MCP --> Claude Code
+                                                    |-- Streamable HTTP MCP --> 任意 MCP 客户端
 ```
 
 三个包：`@cic/protocol`（两端共用的 WS 协议定义与类型守卫）、`@cic/server`、`@cic/extension`。
@@ -18,7 +18,7 @@ Chrome 扩展 (MV3, WXT)  --WebSocket client-->  本地 server (Node, ws on 127.
 ## 安全边界
 
 - **WS 握手校验 Origin**：只接受 `chrome-extension://` 来源。浏览器强制写入 Origin 且页面无法伪造，因此恶意网页无法连上 `127.0.0.1:8765` 顶掉真扩展并接管 tool call。设 `CIC_EXTENSION_ID` 可进一步锁定到具体扩展 ID
-- **MCP 端点开启 DNS rebinding 防护**：强制校验 Host 为 `127.0.0.1:12306` / `localhost:12306`；Origin 存在时一并校验（浏览器页面会被拒，Claude Code 这类不带 Origin 的客户端正常放行）
+- **MCP 端点开启 DNS rebinding 防护**：强制校验 Host 为 `127.0.0.1:12306` / `localhost:12306`；Origin 存在时一并校验（浏览器页面会被拒，非浏览器 MCP 客户端正常放行）
 - **已知不覆盖**：本机任意进程可伪造 Origin 连上 WS。该类攻击者通常已能直接读 Chrome profile，不在本层威胁模型内
 - 扩展权限按需申请，当前只有 `alarms` + loopback host permission；Phase 2 需要 `tabs`/`scripting`（或 `debugger`）时再追加
 
@@ -30,11 +30,16 @@ Chrome 扩展 (MV3, WXT)  --WebSocket client-->  本地 server (Node, ws on 127.
 - [x] WS Origin 鉴权 + MCP DNS rebinding 防护
 - [x] 协议单一来源（`@cic/protocol`）、单测（vitest，三包）、ESLint（`@ddyscn/lint-config`）
 - [x] Phase 2：a11y 快照 + ref 交互 + 域名白名单（见下）
-- [ ] Phase 3：受限 `evaluateScript`
+- [x] Phase 3a：`read_console` / `read_network` / `wait` / 运行时白名单授权 + CI（见下）
+- [ ] Phase 3b：受限 `evaluateScript`、白名单弹窗授权形态
 
 ## Phase 2：快照 + ref 交互 + 白名单
 
-**工具集**（12 个）：`ping`、`navigate`、`snapshot`、`click`、`hover`、`type`、`scroll`、`screenshot`、`tab_list`、`tab_new`、`tab_select`、`tab_close`。
+**工具集**（16 个）：`ping`、`navigate`、`snapshot`、`click`、`hover`、`type`、`scroll`、`screenshot`、`tab_list`、`tab_new`、`tab_select`、`tab_close`、`read_console`、`read_network`、`wait`、`add_allowlist_domain`。
+
+- **read_console / read_network**：CDP 采集的 console 与网络请求元数据（响应体不采集）。缓冲从 tab 首次被工具 attach 起积累
+- **wait**：等待文本 / CSS 选择器 / URL 子串出现（页面内 Promise 轮询，默认 8s 上限 30s），超时返回 `{matched:false}` 而非报错
+- **add_allowlist_domain**：运行时扩白名单。仅在用户明确要求时调用——对话即授权界面
 
 - **snapshot**：`chrome.debugger` + CDP `Accessibility.getFullAXTree`，渲染成 Playwright ariaSnapshot 风格的缩进文本，交互元素带 `[ref=eN]`；click/hover/type/scroll 只接受 ref，杜绝选择器漂移
 - **ref 生命周期**：ref 绑定 tab 的最近一次快照；导航/关 tab/debugger 分离即失效；SPA 重渲染导致的节点失效在 CDP 层映射为 `STALE_REF`；SW 被杀后报 `NO_SNAPSHOT` 引导重新 snapshot
@@ -43,6 +48,8 @@ Chrome 扩展 (MV3, WXT)  --WebSocket client-->  本地 server (Node, ws on 127.
 - **代价（已接受）**：attach 期间 Chrome 显示「正在调试」黄条；目标 tab 打开 DevTools 会顶掉扩展会话，工具报 `DEBUGGER_BUSY`，关闭 DevTools 后自动恢复
 
 ## 开发步骤
+
+> CI：push / PR 自动跑 lint + test + build（.github/workflows/ci.yml）。
 
 ```bash
 # 1. 构建（protocol → server → extension，顺序有依赖）
@@ -58,11 +65,11 @@ npm run dev:server
 # 3. Chrome 加载扩展：chrome://extensions → 开发者模式 → 加载已解压的扩展程序
 #    选择 packages/extension/.output/chrome-mv3
 
-# 4. 注册 MCP 到 Claude Code
-claude mcp add -s user claude-in-chrome --transport http http://127.0.0.1:12306/mcp
+# 4. 注册 MCP 到客户端
+claude mcp add -s user chrome-in-harness --transport http http://127.0.0.1:12306/mcp
 ```
 
-然后在 Claude Code 里让模型调 `ping`，应返回扩展版本与 userAgent。
+然后在客户端里让模型调 `ping`，应返回扩展版本与 userAgent。
 
 ## Roadmap
 

@@ -1,8 +1,8 @@
 {
-  "name": "claude-in-chrome-mcp",
-  "version": "0.1.0",
+  "name": "chrome-in-harness",
+  "version": "0.2.0",
   "private": true,
-  "description": "Claude-in-Chrome style browser MCP: control a real Chrome profile via a MV3 extension bridged to a local MCP server",
+  "description": "Browser MCP: control a real Chrome profile via a MV3 extension bridged to a local MCP server",
   "workspaces": [
     "packages/*"
   ],

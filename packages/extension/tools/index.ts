@@ -1,8 +1,11 @@
+import {addAllowlistDomain} from './allowlist'
+import {readConsole, readNetwork} from './debug'
 import {click, hover, scroll, typeText} from './interact'
 import {ping} from './ping'
 import {screenshot} from './screenshot'
 import {navigate, snapshot} from './snapshot'
 import {tabClose, tabList, tabNew, tabSelect} from './tabs'
+import {wait} from './wait'
 import {setGroupsState} from '../lib/tab-group'
 import type {ToolHandler} from './types'
 
@@ -45,3 +48,7 @@ register('tab_list', tabList)
 register('tab_new', tabNew)
 register('tab_select', tabSelect)
 register('tab_close', tabClose)
+register('read_console', readConsole)
+register('read_network', readNetwork)
+register('wait', wait)
+register('add_allowlist_domain', addAllowlistDomain)

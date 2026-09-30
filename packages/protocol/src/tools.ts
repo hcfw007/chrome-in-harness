@@ -66,6 +66,72 @@ export const tabSelectParams = z.object({tabId: TAB_ID})
 
 export const tabCloseParams = z.object({tabId: TAB_ID})
 
+// ---- P3：调试读取 / 等待 / 运行时白名单授权 ----
+
+export const CONSOLE_LEVELS = ['error', 'warning', 'info', 'all'] as const
+
+export const readConsoleParams = z.object({
+  level: z.enum(CONSOLE_LEVELS).optional(),
+  clear: z.boolean().optional(),
+  ...tabIdField,
+})
+
+export const consoleEntrySchema = z.object({
+  level: z.enum(['error', 'warning', 'info']),
+  text: z.string(),
+  timestamp: z.number(),
+})
+
+export const readConsoleResult = z.object({
+  entries: z.array(consoleEntrySchema),
+})
+
+export const readNetworkParams = z.object({
+  urlFilter: z.string().optional(),
+  limit: z.number().int().positive().max(500).optional(),
+  ...tabIdField,
+})
+
+export const networkEntrySchema = z.object({
+  method: z.string(),
+  url: z.string(),
+  status: z.number().optional(),
+  mimeType: z.string().optional(),
+  error: z.string().optional(),
+  timestamp: z.number(),
+})
+
+export const readNetworkResult = z.object({
+  entries: z.array(networkEntrySchema),
+})
+
+/** 三条件恰传其一：raw shape 给 server 注册 inputSchema，refine 后的给 extension 校验。 */
+export const waitParamsShape = {
+  text: z.string().min(1).optional(),
+  selector: z.string().min(1).optional(),
+  urlContains: z.string().min(1).optional(),
+  timeoutMs: z.number().int().positive().max(30_000).optional(),
+  ...tabIdField,
+}
+
+export const waitParams = z.object(waitParamsShape).refine(
+  (p) => [p.text, p.selector, p.urlContains].filter((v) => v !== undefined).length === 1,
+  {message: 'exactly one of text / selector / urlContains is required'},
+)
+
+export const waitResult = z.object({
+  matched: z.boolean(),
+  timedOut: z.boolean(),
+})
+
+export const addAllowlistDomainParams = z.object({
+  domain: z.string().min(1),
+})
+
+export const addAllowlistDomainResult = z.object({
+  domains: z.array(z.string()),
+})
+
 // ---- 结果 schema：WS 返回值是 unknown，server 侧按边界输入二次校验 ----
 
 export const navigateResult = z.object({
@@ -120,6 +186,10 @@ export const TOOL_NAMES = [
   'tab_new',
   'tab_select',
   'tab_close',
+  'read_console',
+  'read_network',
+  'wait',
+  'add_allowlist_domain',
 ] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]

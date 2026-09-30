@@ -2,6 +2,8 @@
 import {
   clickParams,
   hoverParams,
+  waitParamsShape,
+  waitResult,
   navigateParams,
   navigateResult,
   okResult,
@@ -98,8 +100,22 @@ const screenshot = defineTool({
   },
 })
 
+const wait = defineTool({
+  name: 'wait',
+  title: 'Wait for a condition',
+  description:
+    'Wait until a condition holds on the page: text appears in the body, a CSS selector matches, or the URL contains a substring. Exactly one condition per call. Returns {matched, timedOut} — a timeout is not an error; snapshot afterwards to see the current state.',
+  schema: waitParamsShape,
+  async run(args, call) {
+    const result = await callBridge(call, 'wait', args, waitResult)
+    if (result.matched) return toolText('Condition matched.')
+    return toolText(`Timed out after waiting; condition not met. Take a snapshot to see the current state.`)
+  },
+})
+
 export const BROWSER_TOOL_DEFS: readonly ToolDef[] = [
   navigate,
+  wait,
   snapshot,
   click,
   hover,

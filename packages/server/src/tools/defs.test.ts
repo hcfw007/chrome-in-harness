@@ -1,5 +1,6 @@
 import {describe, expect, test} from 'vitest'
 import {BROWSER_TOOL_DEFS} from './defs-browser.js'
+import {DEBUG_TOOL_DEFS} from './defs-debug.js'
 import {TAB_TOOL_DEFS} from './defs-tabs.js'
 import type {BridgeCall, ToolDef} from './types.js'
 
@@ -19,7 +20,13 @@ async function run(def: ToolDef, args: unknown, call: BridgeCall) {
   return def.run(args, call)
 }
 
-const ALL = [...TAB_TOOL_DEFS, ...BROWSER_TOOL_DEFS]
+const ALL = [...TAB_TOOL_DEFS, ...BROWSER_TOOL_DEFS, ...DEBUG_TOOL_DEFS]
+
+function byName(name: string): ToolDef {
+  const def = ALL.find((d) => d.name === name)
+  if (def === undefined) throw new Error(`def not found: ${name}`)
+  return def
+}
 
 describe('tool name uniqueness', () => {
   test('every tool has a unique name', () => {
@@ -31,21 +38,21 @@ describe('tool name uniqueness', () => {
 describe('browser defs', () => {
   test('navigate formats url, title and load flag', async () => {
     const fake = fakeBridge({url: 'https://example.com/', title: 'Example', loaded: true})
-    const content = await run(BROWSER_TOOL_DEFS[0]!, {url: 'https://example.com/'}, fake.call)
+    const content = await run(byName('navigate'), {url: 'https://example.com/'}, fake.call)
     expect(content).toEqual([{type: 'text', text: 'Navigated to https://example.com/ — "Example"'}])
     expect(fake.received[0]).toEqual({tool: 'navigate', params: {url: 'https://example.com/'}})
   })
 
   test('navigate flags a load timeout', async () => {
     const fake = fakeBridge({url: 'https://slow.example/', loaded: false})
-    const content = await run(BROWSER_TOOL_DEFS[0]!, {url: 'https://slow.example/'}, fake.call)
+    const content = await run(byName('navigate'), {url: 'https://slow.example/'}, fake.call)
     expect(content[0]).toMatchObject({type: 'text'})
     expect((content[0] as {text: string}).text).toContain('load event timed out')
   })
 
   test('snapshot prepends header and truncation marker', async () => {
     const fake = fakeBridge({snapshot: '- document "T"', version: 4, url: 'https://e.com', truncated: true})
-    const content = await run(BROWSER_TOOL_DEFS[1]!, {}, fake.call)
+    const content = await run(byName('snapshot'), {}, fake.call)
     const text = (content[0] as {text: string}).text
     expect(text).toContain('version 4')
     expect(text).toContain('TRUNCATED')
@@ -54,20 +61,20 @@ describe('browser defs', () => {
 
   test('click passes params through and confirms', async () => {
     const fake = fakeBridge({})
-    const content = await run(BROWSER_TOOL_DEFS[2]!, {ref: 'e3'}, fake.call)
+    const content = await run(byName('click'), {ref: 'e3'}, fake.call)
     expect(fake.received[0]).toEqual({tool: 'click', params: {ref: 'e3'}})
     expect(content).toEqual([{type: 'text', text: 'Clicked e3'}])
   })
 
   test('screenshot returns MCP image content with the base64 payload', async () => {
     const fake = fakeBridge({data: 'aGVsbG8=', mimeType: 'image/png'})
-    const content = await run(BROWSER_TOOL_DEFS[6]!, {}, fake.call)
+    const content = await run(byName('screenshot'), {}, fake.call)
     expect(content).toEqual([{type: 'image', data: 'aGVsbG8=', mimeType: 'image/png'}])
   })
 
   test('extension errors surface as thrown Errors for the unified handler', async () => {
     const fake = fakeBridge(new Error('STALE_REF: ref e1 is stale'))
-    await expect(run(BROWSER_TOOL_DEFS[2]!, {ref: 'e1'}, fake.call)).rejects.toThrow('STALE_REF')
+    await expect(run(byName('click'), {ref: 'e1'}, fake.call)).rejects.toThrow('STALE_REF')
   })
 })
 
@@ -79,7 +86,7 @@ describe('tab defs', () => {
         {tabId: 2, title: '', url: 'about:blank', active: false},
       ],
     })
-    const tabList = TAB_TOOL_DEFS[1]!
+    const tabList = byName('tab_list')
     const content = await run(tabList, {}, fake.call)
     const text = (content[0] as {text: string}).text
     expect(text).toContain('tabId=1 [active] https://docs.example.com — "Docs"')
@@ -94,7 +101,7 @@ describe('tab defs', () => {
 
   test('tab_new returns the new tab id', async () => {
     const fake = fakeBridge({tabId: 9})
-    const tabNew = TAB_TOOL_DEFS[2]!
+    const tabNew = byName('tab_new')
     const content = await run(tabNew, {url: 'https://example.com'}, fake.call)
     expect(content).toEqual([{type: 'text', text: 'Opened tab 9 at https://example.com'}])
   })

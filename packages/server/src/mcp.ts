@@ -4,8 +4,8 @@ import {StreamableHTTPServerTransport} from '@modelcontextprotocol/sdk/server/st
 import {registerAllTools} from './tools/index.js'
 import type {WsBridge} from './ws-bridge.js'
 
-const SERVER_NAME = 'claude-in-chrome'
-const SERVER_VERSION = '0.1.0'
+const SERVER_NAME = 'chrome-in-harness'
+const SERVER_VERSION = '0.2.0'
 const MAX_BODY_BYTES = 1024 * 1024
 
 const PARSE_ERROR = -32700
@@ -74,7 +74,7 @@ function createMcpServer(wsBridge: WsBridge): McpServer {
  * DNS rebinding 防护：
  * - allowedHosts 强制校验 Host，恶意域名解析到 127.0.0.1 后 Host 不匹配即被拒
  * - allowedOrigins 仅在 Origin 存在时校验：浏览器页面必带 Origin 会被拒，
- *   Claude Code 这类非浏览器客户端不带 Origin，正常放行
+ *   非浏览器 MCP 客户端不带 Origin，正常放行
  */
 function localOnlyOrigins(port: number): {allowedHosts: string[]; allowedOrigins: string[]} {
   const hosts = [`127.0.0.1:${port}`, `localhost:${port}`]

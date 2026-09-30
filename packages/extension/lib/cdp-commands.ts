@@ -2,7 +2,10 @@
 
 import {parseAxNodes} from './ax-types'
 import type {AxNode} from './ax-types'
-import {send, waitForEvent} from './cdp'
+import {consoleBuffer} from './console-buffer'
+import type {ConsoleLevel} from './console-buffer'
+import {networkBuffer} from './network-buffer'
+import {send, subscribeEvents, waitForEvent} from './cdp'
 
 /** 每个 debugger 会话 enable 一次的 domain 集合（SW 内存级）。 */
 const enabledDomains = new Map<number, Set<string>>()
@@ -17,6 +20,93 @@ async function enableOnce(tabId: number, domain: string, command: string): Promi
     await send(tabId, command)
     domains.add(domain)
   }
+}
+
+/** 执行表达式并取 JSON 值；页面内异常透出为普通 Error。 */
+export async function evaluateJson<T = unknown>(tabId: number, expression: string): Promise<T> {
+  const result = await send<{
+    result?: {value?: unknown}
+    exceptionDetails?: {text?: string; exception?: {description?: string}}
+  }>(tabId, 'Runtime.evaluate', {expression, returnByValue: true, awaitPromise: true})
+  const details = result.exceptionDetails
+  if (details !== undefined) {
+    throw new Error(details.exception?.description ?? details.text ?? 'evaluate failed')
+  }
+  return result.result?.value as T
+}
+
+/** console 级别归一：CDP type 到三档。 */
+function consoleLevel(cdpType: string): ConsoleLevel {
+  if (cdpType === 'error') return 'error'
+  if (cdpType === 'warning') return 'warning'
+  return 'info'
+}
+
+function serializeArgs(args: unknown): string {
+  if (!Array.isArray(args)) return ''
+  const parts = args.map((raw) => {
+    const arg = raw as {value?: unknown; description?: string; type?: string}
+    if (arg.description !== undefined) return arg.description
+    if (typeof arg.value === 'string') return arg.value
+    if (arg.value !== undefined) return JSON.stringify(arg.value)
+    return arg.type ?? 'undefined'
+  })
+  return parts.join(' ')
+}
+
+/** 每个会话注册一次 console / network 采集订阅（幂等）。 */
+const collectors = new Map<number, true>()
+
+export function ensureCollectors(tabId: number): void {
+  if (collectors.has(tabId)) return
+  collectors.set(tabId, true)
+  subscribeEvents(tabId, 'Runtime.consoleAPICalled', (raw) => {
+    const params = raw as {type?: string; args?: unknown; timestamp?: number}
+    consoleBuffer.append(tabId, {
+      level: consoleLevel(params.type ?? 'log'),
+      text: serializeArgs(params.args).slice(0, 500),
+      timestamp: params.timestamp ?? Date.now(),
+    })
+  })
+  subscribeEvents(tabId, 'Runtime.exceptionThrown', (raw) => {
+    const params = raw as {
+      timestamp?: number
+      exceptionDetails?: {text?: string; exception?: {description?: string}; value?: string}
+    }
+    const text = params.exceptionDetails?.exception?.description ?? params.exceptionDetails?.value ?? params.exceptionDetails?.text ?? 'uncaught exception'
+    consoleBuffer.append(tabId, {level: 'error', text: text.slice(0, 500), timestamp: params.timestamp ?? Date.now()})
+  })
+  subscribeEvents(tabId, 'Network.requestWillBeSent', (raw) => {
+    const params = raw as {
+      requestId?: string
+      timestamp?: number
+      request?: {url?: string; method?: string}
+    }
+    if (params.requestId === undefined || params.request?.url === undefined) return
+    networkBuffer.recordRequest(
+      tabId,
+      params.requestId,
+      params.request.method ?? 'GET',
+      params.request.url,
+      params.timestamp ?? Date.now(),
+    )
+  })
+  subscribeEvents(tabId, 'Network.responseReceived', (raw) => {
+    const params = raw as {requestId?: string; response?: {status?: number; mimeType?: string}}
+    if (params.requestId === undefined) return
+    networkBuffer.recordResponse(tabId, params.requestId, params.response?.status ?? 0, params.response?.mimeType)
+  })
+  subscribeEvents(tabId, 'Network.loadingFailed', (raw) => {
+    const params = raw as {requestId?: string; errorText?: string; canceled?: boolean}
+    if (params.requestId === undefined) return
+    const reason = params.canceled === true ? 'canceled' : params.errorText ?? 'failed'
+    networkBuffer.recordFailure(tabId, params.requestId, reason)
+  })
+}
+
+/** 清采集注册（detach / tab 关闭时；下次 attach 会重新注册）。 */
+export function dropCollectors(tabId: number): void {
+  collectors.delete(tabId)
 }
 
 export async function getFullAxTree(tabId: number): Promise<AxNode[]> {

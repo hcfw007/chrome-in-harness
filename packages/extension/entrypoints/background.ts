@@ -1,6 +1,9 @@
 /** SW 入口：WS 重连、keepalive、CDP/ref 生命周期事件。监听一律顶层同步注册。 */
 import {initCdpListeners} from '../lib/cdp'
+import {dropCollectors} from '../lib/cdp-commands'
 import {connect} from '../lib/connection'
+import {consoleBuffer} from '../lib/console-buffer'
+import {networkBuffer} from '../lib/network-buffer'
 import {refStore} from '../lib/ref-store'
 
 const KEEPALIVE_ALARM = 'keepalive'
@@ -20,6 +23,9 @@ export default defineBackground(() => {
   // cdp.ts 内部清 attach 状态；这里连带失效该 tab 的 ref
   initCdpListeners((tabId) => {
     refStore.invalidate(tabId)
+    consoleBuffer.clear(tabId)
+    networkBuffer.clear(tabId)
+    dropCollectors(tabId)
   })
 
   // 页面 URL 变化（硬导航与 pushState）→ 该 tab 的 ref 全部失效
@@ -30,6 +36,9 @@ export default defineBackground(() => {
   // tab 关闭 → 释放其快照
   chrome.tabs.onRemoved.addListener((tabId) => {
     refStore.invalidate(tabId)
+    consoleBuffer.clear(tabId)
+    networkBuffer.clear(tabId)
+    dropCollectors(tabId)
   })
 
   // 首次安装直接打开 options 页，引导配置白名单（空名单 = 拒绝全部）
@@ -37,5 +46,5 @@ export default defineBackground(() => {
     void chrome.runtime.openOptionsPage()
   })
 
-  console.log('[background] Claude in Chrome MCP service worker started')
+  console.log('[background] Chrome in Harness service worker started')
 })
