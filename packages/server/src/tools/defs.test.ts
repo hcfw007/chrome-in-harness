@@ -1,6 +1,7 @@
 import {describe, expect, test} from 'vitest'
 import {BROWSER_TOOL_DEFS} from './defs-browser.js'
 import {DEBUG_TOOL_DEFS} from './defs-debug.js'
+import {EVALUATE_TOOL_DEFS} from './defs-evaluate.js'
 import {TAB_TOOL_DEFS} from './defs-tabs.js'
 import type {BridgeCall, ToolDef} from './types.js'
 
@@ -20,7 +21,7 @@ async function run(def: ToolDef, args: unknown, call: BridgeCall) {
   return def.run(args, call)
 }
 
-const ALL = [...TAB_TOOL_DEFS, ...BROWSER_TOOL_DEFS, ...DEBUG_TOOL_DEFS]
+const ALL = [...TAB_TOOL_DEFS, ...BROWSER_TOOL_DEFS, ...DEBUG_TOOL_DEFS, ...EVALUATE_TOOL_DEFS]
 
 function byName(name: string): ToolDef {
   const def = ALL.find((d) => d.name === name)
@@ -104,5 +105,36 @@ describe('tab defs', () => {
     const tabNew = byName('tab_new')
     const content = await run(tabNew, {url: 'https://example.com'}, fake.call)
     expect(content).toEqual([{type: 'text', text: 'Opened tab 9 at https://example.com'}])
+  })
+})
+
+describe('evaluate defs', () => {
+  test('evaluate_script renders value and type, flags truncation', async () => {
+    const fake = fakeBridge({value: '{"a":1}', type: 'object', truncated: true})
+    const content = await run(byName('evaluate_script'), {expression: '({a: 1})'}, fake.call)
+    expect(content).toEqual([{type: 'text', text: '<object> {"a":1} (TRUNCATED)'}])
+  })
+
+  test('evaluate_script forwards awaitPromise and tabId', async () => {
+    const fake = fakeBridge({value: '5', type: 'number', truncated: false})
+    await run(byName('evaluate_script'), {expression: '(async () => 5)()', awaitPromise: true, tabId: 3}, fake.call)
+    expect(fake.received[0]).toEqual({
+      tool: 'evaluate_script',
+      params: {expression: '(async () => 5)()', awaitPromise: true, tabId: 3},
+    })
+  })
+
+  test('request_permission reports grant and updated list', async () => {
+    const fake = fakeBridge({granted: true, domains: ['example.com']})
+    const content = await run(byName('request_permission'), {domain: 'example.com'}, fake.call)
+    const text = (content[0] as {text: string}).text
+    expect(text).toContain('Granted example.com')
+    expect(text).toContain('example.com')
+  })
+
+  test('request_permission reports denial', async () => {
+    const fake = fakeBridge({granted: false, domains: []})
+    const content = await run(byName('request_permission'), {domain: 'example.com'}, fake.call)
+    expect(content).toEqual([{type: 'text', text: 'Permission denied by the user for example.com.'}])
   })
 })

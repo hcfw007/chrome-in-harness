@@ -2,11 +2,17 @@
 import type {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js'
 import {BROWSER_TOOL_DEFS} from './defs-browser.js'
 import {DEBUG_TOOL_DEFS} from './defs-debug.js'
+import {EVALUATE_TOOL_DEFS} from './defs-evaluate.js'
 import {TAB_TOOL_DEFS} from './defs-tabs.js'
 import {formatError} from './types.js'
 import type {BridgeCall, ToolContent, ToolDef} from './types.js'
 
-const ALL_TOOL_DEFS: readonly ToolDef[] = [...TAB_TOOL_DEFS, ...BROWSER_TOOL_DEFS, ...DEBUG_TOOL_DEFS]
+const ALL_TOOL_DEFS: readonly ToolDef[] = [
+  ...TAB_TOOL_DEFS,
+  ...BROWSER_TOOL_DEFS,
+  ...DEBUG_TOOL_DEFS,
+  ...EVALUATE_TOOL_DEFS,
+]
 
 function toResult(
   content: ToolContent[],

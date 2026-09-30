@@ -17,6 +17,8 @@ export const TOOL_ERROR_CODES = {
   STALE_REF: 'STALE_REF',
   NO_SNAPSHOT: 'NO_SNAPSHOT',
   DEBUGGER_BUSY: 'DEBUGGER_BUSY',
+  SCRIPT_REJECTED: 'SCRIPT_REJECTED',
+  PERMISSION_DENIED: 'PERMISSION_DENIED',
 } as const
 
 export type ToolErrorCode = (typeof TOOL_ERROR_CODES)[keyof typeof TOOL_ERROR_CODES]
@@ -132,6 +134,32 @@ export const addAllowlistDomainResult = z.object({
   domains: z.array(z.string()),
 })
 
+// ---- Phase 3b：受限 evaluateScript + 权限弹窗授权 ----
+
+export const SCRIPT_MAX_LENGTH = 8_000
+
+export const evaluateScriptParams = z.object({
+  expression: z.string().min(1).max(SCRIPT_MAX_LENGTH),
+  awaitPromise: z.boolean().optional(),
+  timeoutMs: z.number().int().positive().max(30_000).optional(),
+  ...tabIdField,
+})
+
+export const evaluateScriptResult = z.object({
+  value: z.unknown(),
+  type: z.string(),
+  truncated: z.boolean(),
+})
+
+export const requestPermissionParams = z.object({
+  domain: z.string().min(1),
+})
+
+export const requestPermissionResult = z.object({
+  granted: z.boolean(),
+  domains: z.array(z.string()),
+})
+
 // ---- 结果 schema：WS 返回值是 unknown，server 侧按边界输入二次校验 ----
 
 export const navigateResult = z.object({
@@ -190,6 +218,8 @@ export const TOOL_NAMES = [
   'read_network',
   'wait',
   'add_allowlist_domain',
+  'evaluate_script',
+  'request_permission',
 ] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]

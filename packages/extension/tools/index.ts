@@ -1,13 +1,15 @@
+import {setGroupsState} from '../lib/tab-group'
 import {addAllowlistDomain} from './allowlist'
 import {readConsole, readNetwork} from './debug'
+import {evaluateScript} from './evaluate'
 import {click, hover, scroll, typeText} from './interact'
 import {ping} from './ping'
+import {requestPermission} from './request-permission'
 import {screenshot} from './screenshot'
 import {navigate, snapshot} from './snapshot'
 import {tabClose, tabList, tabNew, tabSelect} from './tabs'
-import {wait} from './wait'
-import {setGroupsState} from '../lib/tab-group'
 import type {ToolHandler} from './types'
+import {wait} from './wait'
 
 const registry = new Map<string, ToolHandler>()
 
@@ -52,3 +54,5 @@ register('read_console', readConsole)
 register('read_network', readNetwork)
 register('wait', wait)
 register('add_allowlist_domain', addAllowlistDomain)
+register('evaluate_script', evaluateScript)
+register('request_permission', requestPermission)
