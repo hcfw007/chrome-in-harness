@@ -6,6 +6,11 @@ on:
 
 permissions:
   contents: write
+  id-token: write # npm provenance（供应链证明）
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   npm:
@@ -18,17 +23,32 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: npm
       - run: npm ci
+
+      - name: Verify tag matches package version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::tag ($TAG) does not match package.json version ($PKG)"
+            exit 1
+          fi
+          echo "publishing version $PKG"
+
+      - run: npm run lint
+      - run: npm test
       - run: npm run build
+
+      # 顺序：protocol 是 server/launcher 的依赖，必须最先发。
       - name: Publish @chrome-in-harness/protocol
-        run: npm publish --workspace @chrome-in-harness/protocol --access public
+        run: npm publish --workspace @chrome-in-harness/protocol --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish @chrome-in-harness/server
-        run: npm publish --workspace @chrome-in-harness/server --access public
+        run: npm publish --workspace @chrome-in-harness/server --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish @chrome-in-harness/launcher
-        run: npm publish --workspace @chrome-in-harness/launcher --access public
+        run: npm publish --workspace @chrome-in-harness/launcher --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -42,12 +62,12 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: npm run build -w @chrome-in-harness/extension
-      - name: Package extension zip
+      - run: npm run zip -w @chrome-in-harness/extension
+      - name: Collect extension zip
         run: |
-          cd packages/extension/.output/chrome-mv3
-          zip -r ../../../chrome-in-harness-extension.zip . -x '.*'
+          mkdir -p dist-release
+          cp packages/extension/.output/chrome-in-harness-*.zip dist-release/chrome-in-harness-extension.zip
       - uses: softprops/action-gh-release@v2
         with:
-          files: chrome-in-harness-extension.zip
+          files: dist-release/chrome-in-harness-extension.zip
           generate_release_notes: true
