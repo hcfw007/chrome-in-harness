@@ -1,5 +1,6 @@
 import {describe, expect, test} from 'vitest'
 import {
+  TOOL_ERROR_CODES,
   addAllowlistDomainParams,
   clickAtParams,
   clickParams,
@@ -12,6 +13,14 @@ import {
   typeParams,
   waitParams,
 } from './tools.js'
+
+describe('TOOL_ERROR_CODES', () => {
+  test('distinguishes guard rejection from runtime script failure', () => {
+    expect(TOOL_ERROR_CODES.SCRIPT_REJECTED).toBe('SCRIPT_REJECTED')
+    expect(TOOL_ERROR_CODES.SCRIPT_ERROR).toBe('SCRIPT_ERROR')
+    expect(TOOL_ERROR_CODES.SCRIPT_ERROR).not.toBe(TOOL_ERROR_CODES.SCRIPT_REJECTED)
+  })
+})
 
 describe('params schemas', () => {
   test('navigate requires a valid url', () => {

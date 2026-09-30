@@ -68,8 +68,10 @@ export const evaluateScript: ToolHandler = async (rawParams) => {
       )
     }
   } catch (error) {
+    // 守卫已在上方放行；走到这里的是「脚本本身执行失败」（页面抛错/超时），
+    // 不是策略拒绝，用 SCRIPT_ERROR 区分，避免模型误以为是脚本被拦而改写脚本。
     const message = error instanceof Error ? error.message : String(error)
-    throw toolError(TOOL_ERROR_CODES.SCRIPT_REJECTED, message)
+    throw toolError(TOOL_ERROR_CODES.SCRIPT_ERROR, message)
   }
 
   const {value: serialized, type, truncated} = serializeValue(value)
