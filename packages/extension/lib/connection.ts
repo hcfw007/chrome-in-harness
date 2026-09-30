@@ -5,7 +5,7 @@ import {
   type WsHello,
   type WsResponse,
   type WsSuccessResponse,
-} from '@cic/protocol'
+} from '@chrome-in-harness/protocol'
 import {dispatch} from '../tools'
 
 const WS_URL = 'ws://127.0.0.1:8765'

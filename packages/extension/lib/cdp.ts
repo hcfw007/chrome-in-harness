@@ -3,7 +3,7 @@
  * 白名单检查不在这里 —— tools/access.ts 保证先于任何 attach。
  */
 
-import {TOOL_ERROR_CODES} from '@cic/protocol'
+import {TOOL_ERROR_CODES} from '@chrome-in-harness/protocol'
 
 /** 「扩展认为已 attach」的 tab 集合；SW 重启后用 getTargets 惰性重查。 */
 const sessions = new Map<number, true>()

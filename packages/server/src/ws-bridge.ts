@@ -1,4 +1,4 @@
-import {PROTOCOL_VERSION, parseExtensionMessage} from '@cic/protocol'
+import {PROTOCOL_VERSION, parseExtensionMessage} from '@chrome-in-harness/protocol'
 import {WebSocketServer, WebSocket} from 'ws'
 import {isAllowedExtensionOrigin, type OriginGuardOptions} from './origin-guard.js'
 

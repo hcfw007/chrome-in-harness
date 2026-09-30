@@ -1,13 +1,13 @@
 /**
  * 工具鉴权编排，两层边界，顺序严格：
- * ① tab 边界：目标必须在 CiC MCP 组内（agent 的工作区），group 外的 tab 一律拒绝；
+ * ① tab 边界：目标必须在 Chrome in Harness 组内（agent 的工作区），group 外的 tab 一律拒绝；
  * ② 域边界：tab URL（或将要导航的目标 URL）必须在域名白名单内。
  * 两层都过之后才允许触碰 chrome.debugger。
  */
-import {TOOL_ERROR_CODES} from '@cic/protocol'
-import type {ToolErrorCode} from '@cic/protocol'
-import {findManagedTab, isTabManaged} from '../lib/tab-group'
+import {TOOL_ERROR_CODES} from '@chrome-in-harness/protocol'
+import type {ToolErrorCode} from '@chrome-in-harness/protocol'
 import {isUrlAllowed} from '../lib/site-filter'
+import {findManagedTab, isTabManaged} from '../lib/tab-group'
 import {getAllowlist} from '../lib/whitelist'
 
 export function toolError(code: ToolErrorCode, message: string): Error {
@@ -22,7 +22,7 @@ export interface TargetTab {
 function notManaged(tabId: number): Error {
   return toolError(
     TOOL_ERROR_CODES.TAB_NOT_MANAGED,
-    `tab ${tabId} is outside the 'CiC MCP' group. Only tabs inside the group (created via tab_new) can be operated.`,
+    `tab ${tabId} is outside the 'Chrome in Harness' group. Only tabs inside the group (created via tab_new) can be operated.`,
   )
 }
 
@@ -35,7 +35,7 @@ export async function resolveTargetTab(tabId?: number): Promise<TargetTab> {
   }
   const tab = await findManagedTab()
   if (tab === undefined || tab.id === undefined) {
-    throw new Error('no managed tab found; call tab_new to create one inside the CiC MCP group')
+    throw new Error('no managed tab found; call tab_new to create one inside the Chrome in Harness group')
   }
   return {tabId: tab.id, url: tab.url ?? ''}
 }

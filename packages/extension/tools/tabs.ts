@@ -1,11 +1,11 @@
-/** 标签页管理：list / new / select / close。tab_new 校验目标 URL、归入 CiC MCP 组；close 失效 ref。 */
-import {GROUP_COLOR, GROUP_TITLE} from '../lib/tab-group'
+/** 标签页管理：list / new / select / close。tab_new 校验目标 URL、归入 Chrome in Harness 组；close 失效 ref。 */
 import {refStore} from '../lib/ref-store'
+import {GROUP_COLOR, GROUP_TITLE} from '../lib/tab-group'
 import {authorizeNavigate} from './access'
 
 import type {ToolHandler} from './types'
 
-/** 把 tab 并进本窗口的 CiC MCP 组；不存在则新建。归组失败不影响 tab 本身。 */
+/** 把 tab 并进本窗口的 Chrome in Harness 组；不存在则新建。归组失败不影响 tab 本身。 */
 async function groupTab(tabId: number, windowId: number | undefined): Promise<void> {
   try {
     const existing = await chrome.tabGroups.query(

@@ -1,8 +1,8 @@
 /**
  * 工具装配层类型：server 侧只负责「声明工具 → 调桥 → 格式化结果」，
- * 参数/结果 schema 的唯一真源在 @cic/protocol。
+ * 参数/结果 schema 的唯一真源在 @chrome-in-harness/protocol。
  */
-import type {ToolName} from '@cic/protocol'
+import type {ToolName} from '@chrome-in-harness/protocol'
 import type {z, ZodRawShape} from 'zod'
 
 /** 对 WsBridge.sendToExtension 的抽象，测试时用 fake 替换。 */

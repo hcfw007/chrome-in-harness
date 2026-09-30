@@ -1,6 +1,6 @@
 /** wait 工具：注入页面内 Promise 等条件（text / selector / urlContains 三选一）。 */
-import {evaluateJson} from '../lib/cdp-commands'
 import {ensureAttached} from '../lib/cdp'
+import {evaluateJson} from '../lib/cdp-commands'
 import {authorizeTab} from './access'
 
 import type {ToolHandler} from './types'

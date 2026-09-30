@@ -6,7 +6,7 @@ import {
   readConsoleResult,
   readNetworkParams,
   readNetworkResult,
-} from '@cic/protocol'
+} from '@chrome-in-harness/protocol'
 import {callBridge, defineTool, toolText} from './types.js'
 import type {ToolDef} from './types.js'
 

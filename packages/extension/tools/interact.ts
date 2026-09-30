@@ -1,5 +1,5 @@
 /** ref 交互工具：click / hover / type / scroll。ref 三态解析 + CDP 真实输入。 */
-import {TOOL_ERROR_CODES} from '@cic/protocol'
+import {TOOL_ERROR_CODES} from '@chrome-in-harness/protocol'
 import {ensureAttached} from '../lib/cdp'
 import {
   dispatchClick,

@@ -1,7 +1,7 @@
 /** read_console / read_network 工具：从环形缓冲读取采集结果。 */
-import {consoleBuffer} from '../lib/console-buffer'
 import {ensureAttached} from '../lib/cdp'
 import {ensureCollectors} from '../lib/cdp-commands'
+import {consoleBuffer} from '../lib/console-buffer'
 import {networkBuffer} from '../lib/network-buffer'
 import {authorizeTab} from './access'
 

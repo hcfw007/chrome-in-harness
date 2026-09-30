@@ -1,4 +1,4 @@
-import {PROTOCOL_VERSION, isWsRequest} from '@cic/protocol'
+import {PROTOCOL_VERSION, isWsRequest} from '@chrome-in-harness/protocol'
 import {afterEach, describe, expect, test} from 'vitest'
 import {WebSocket} from 'ws'
 import {WsBridge, type WsBridgeOptions} from './ws-bridge.js'

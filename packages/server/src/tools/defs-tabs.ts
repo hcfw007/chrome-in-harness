@@ -6,7 +6,7 @@ import {
   tabListResult,
   tabNewParams,
   tabSelectParams,
-} from '@cic/protocol'
+} from '@chrome-in-harness/protocol'
 import {z} from 'zod'
 import {callBridge, defineTool, toolText} from './types.js'
 import type {ToolDef} from './types.js'

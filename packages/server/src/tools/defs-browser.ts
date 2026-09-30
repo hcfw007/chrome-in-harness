@@ -13,7 +13,7 @@ import {
   snapshotParams,
   snapshotResult,
   typeParams,
-} from '@cic/protocol'
+} from '@chrome-in-harness/protocol'
 import {callBridge, defineTool, toolImage, toolText} from './types.js'
 import type {ToolDef} from './types.js'
 
@@ -109,7 +109,7 @@ const wait = defineTool({
   async run(args, call) {
     const result = await callBridge(call, 'wait', args, waitResult)
     if (result.matched) return toolText('Condition matched.')
-    return toolText(`Timed out after waiting; condition not met. Take a snapshot to see the current state.`)
+    return toolText('Timed out after waiting; condition not met. Take a snapshot to see the current state.')
   },
 })
 

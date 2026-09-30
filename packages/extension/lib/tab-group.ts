@@ -1,9 +1,9 @@
 /**
- * CiC MCP tab group 边界：受管 tab 的唯一真源是「tab 的 groupId 指向名为
- * CiC MCP 的组」。用户把 tab 拖进/拖出组即时改变受管状态。
+ * Chrome in Harness tab group 边界：受管 tab 的唯一真源是「tab 的 groupId 指向名为
+ * Chrome in Harness 的组」。用户把 tab 拖进/拖出组即时改变受管状态。
  */
 
-export const GROUP_TITLE = 'CiC MCP'
+export const GROUP_TITLE = 'Chrome in Harness'
 export const GROUP_COLOR = 'blue' as const
 
 /** 组标题三态前缀：操作中 / 刚成功 / 刚失败；空闲即无前缀。 */
