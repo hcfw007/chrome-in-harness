@@ -1,9 +1,24 @@
 /** 标签页管理：list / new / select / close。tab_new 校验目标 URL、归入 Chrome in Harness 组；close 失效 ref。 */
+import {TOOL_ERROR_CODES} from '@chrome-in-harness/protocol'
 import {refStore} from '../lib/ref-store'
-import {GROUP_COLOR, GROUP_TITLE} from '../lib/tab-group'
-import {authorizeNavigate} from './access'
+import {GROUP_COLOR, GROUP_TITLE, isTabManaged} from '../lib/tab-group'
+import {authorizeNavigate, toolError} from './access'
 
 import type {ToolHandler} from './types'
+
+/**
+ * tab_select / tab_close 的组边界：只允许操作 Chrome in Harness 组内的 tab。
+ * 其余工具（snapshot/click/…）都在 access.ts 里做同一道校验；这两个虽不触碰 debugger，
+ * 但 select 会抢用户焦点、close 会关掉用户任意 tab，破坏性更强，必须同样收口。
+ */
+async function assertManaged(tabId: number): Promise<void> {
+  if (!(await isTabManaged(tabId))) {
+    throw toolError(
+      TOOL_ERROR_CODES.TAB_NOT_MANAGED,
+      `tab ${tabId} is outside the 'Chrome in Harness' group. Only tabs inside the group (created via tab_new) can be operated.`,
+    )
+  }
+}
 
 /** 把 tab 并进本窗口的 Chrome in Harness 组；不存在则新建。归组失败不影响 tab 本身。 */
 async function groupTab(tabId: number, windowId: number | undefined): Promise<void> {
@@ -51,6 +66,7 @@ export const tabNew: ToolHandler = async (params) => {
 
 export const tabSelect: ToolHandler = async (params) => {
   const {tabId} = params as {tabId: number}
+  await assertManaged(tabId)
   const updated = await chrome.tabs.update(tabId, {active: true}).catch(() => undefined)
   if (updated === undefined) throw new Error(`tab ${tabId} not found`)
   return {}
@@ -58,6 +74,7 @@ export const tabSelect: ToolHandler = async (params) => {
 
 export const tabClose: ToolHandler = async (params) => {
   const {tabId} = params as {tabId: number}
+  await assertManaged(tabId)
   await chrome.tabs.remove(tabId).catch(() => {
     throw new Error(`tab ${tabId} not found`)
   })
