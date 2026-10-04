@@ -1,5 +1,7 @@
 /** CDP 高层操作：每个函数对应一条（组）协议命令，全部经 lib/cdp.ts 的会话管理。 */
 
+import {TOOL_ERROR_CODES} from '@chrome-in-harness/protocol'
+
 import {parseAxNodes} from './ax-types'
 import type {AxNode} from './ax-types'
 import {send, subscribeEvents, waitForEvent} from './cdp'
@@ -159,16 +161,39 @@ export async function getTabTitle(tabId: number): Promise<string | undefined> {
 }
 
 /**
- * 让目标 tab 在其窗口内变为活动/可见。
- * 后台 tab 上 CDP `Input.*` 会被静默丢弃（visibility:hidden 时页面不处理输入），
- * 表现为「点了没反应」。所有输入类工具在派发前调用此函数。
+ * 让目标 tab 可交互：tab 激活到前台 + 所在窗口若最小化则恢复。
+ * CDP `Input.*` 在两种情况下被静默丢弃（命令成功返回但页面收不到事件，
+ * 表现为「点了没反应」）：
+ * ① tab 在后台（visibility:hidden 不处理输入）；
+ * ② 所在窗口最小化（实测 Chrome 154，前台 tab 也一样丢）。
+ * 所有输入类工具在派发前调用此函数。
  */
 export async function activateTab(tabId: number): Promise<void> {
   try {
     const tab = await chrome.tabs.get(tabId)
     if (tab.active !== true) await chrome.tabs.update(tabId, {active: true})
+    if (tab.windowId !== undefined) await restoreWindowIfNeeded(tab.windowId)
   } catch (error) {
+    // 窗口恢复失败必须透传（否则输入静默失效），其余意外只告警不阻塞
+    if (error instanceof Error && error.message.startsWith(`${TOOL_ERROR_CODES.WINDOW_NOT_INTERACTIVE}:`)) {
+      throw error
+    }
     console.warn('[cdp] activateTab failed:', error instanceof Error ? error.message : error)
+  }
+}
+
+/** 最小化窗口上 CDP 输入全部静默失效：恢复正常并聚焦；恢复失败抛 WINDOW_NOT_INTERACTIVE。 */
+async function restoreWindowIfNeeded(windowId: number): Promise<void> {
+  const win = await chrome.windows.get(windowId)
+  if (win.state !== 'minimized') return
+  try {
+    await chrome.windows.update(windowId, {state: 'normal', focused: true})
+  } catch (error) {
+    throw new Error(
+      `${TOOL_ERROR_CODES.WINDOW_NOT_INTERACTIVE}: the window is minimized and could not be restored ` +
+        `(${error instanceof Error ? error.message : String(error)}); restore it manually and retry`,
+      {cause: error},
+    )
   }
 }
 

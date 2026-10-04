@@ -48,6 +48,7 @@ Chrome 扩展 (MV3, WXT)  --WebSocket client-->  本地 server (Node, ws on 127.
 - **真实输入**：点击/输入走 CDP `Input.*`（isTrusted=true），与真人操作无法区分
 - **域名白名单**：`chrome.storage.local` 持久化，扩展侧在 attach 前校验，空名单 = 拒绝全部；规则 `example.com` 匹配自身与任意深度子域；首次安装自动打开 options 页
 - **代价（已接受）**：attach 期间 Chrome 显示「正在调试」黄条；目标 tab 打开 DevTools 会顶掉扩展会话，工具报 `DEBUGGER_BUSY`，关闭 DevTools 后自动恢复
+- **输入前提（自动处理）**：CDP `Input.*` 在后台 tab 与最小化窗口上会被静默丢弃；输入类工具派发前会激活目标 tab，窗口最小化时自动恢复并聚焦，恢复失败报 `WINDOW_NOT_INTERACTIVE`
 
 ## 安装与使用
 
