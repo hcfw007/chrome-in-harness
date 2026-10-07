@@ -14,9 +14,10 @@ export function serializeValue(raw: unknown): SerializedValue {
   if (raw === undefined) return {value: 'undefined', type: 'undefined', truncated: false}
   if (raw === null) return {value: 'null', type: 'object', truncated: false}
   if (type === 'string') {
-    return raw.length > MAX_STRING
-      ? {value: `${raw.slice(0, MAX_STRING)}…`, type: 'string', truncated: true}
-      : {value: raw, type: 'string', truncated: false}
+    const text = raw as string
+    return text.length > MAX_STRING
+      ? {value: `${text.slice(0, MAX_STRING)}…`, type: 'string', truncated: true}
+      : {value: text, type: 'string', truncated: false}
   }
   if (type === 'number' || type === 'boolean' || type === 'bigint') {
     return {value: String(raw), type, truncated: false}

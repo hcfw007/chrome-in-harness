@@ -4,12 +4,17 @@ import {
   addAllowlistDomainParams,
   clickAtParams,
   clickParams,
+  getTextParams,
+  getTextResult,
   navigateParams,
+  pressKeyParams,
   readConsoleParams,
   readNetworkParams,
   scrollParams,
+  snapshotParams,
   snapshotResult,
   tabSelectParams,
+  takeoverTabParams,
   typeParams,
   waitParams,
 } from './tools.js'
@@ -57,6 +62,68 @@ describe('params schemas', () => {
     expect(typeParams.safeParse({ref: 'e1', text: ''}).success).toBe(false)
     expect(typeParams.safeParse({ref: 'e1', text: 'x'.repeat(10_001)}).success).toBe(false)
     expect(typeParams.safeParse({ref: 'e1', text: 'x'.repeat(10_000)}).success).toBe(true)
+  })
+
+  test('type accepts the new optional editing params and stays back-compat', () => {
+    // 老调用方式原样有效
+    expect(typeParams.safeParse({ref: 'e1', text: 'hello', submit: true}).success).toBe(true)
+    // 新参数：mode / clear / focus
+    expect(typeParams.safeParse({ref: 'e1', text: 'x', mode: 'verbatim'}).success).toBe(true)
+    expect(typeParams.safeParse({ref: 'e1', text: 'x', mode: 'insert', clear: true}).success).toBe(true)
+    expect(typeParams.safeParse({ref: 'e1', text: 'x', focus: 'none'}).success).toBe(true)
+    expect(typeParams.safeParse({ref: 'e1', text: 'x', focus: 'click-ref'}).success).toBe(true)
+    // focus:none 时 ref 可省；否则非法 mode/focus 拒绝
+    expect(typeParams.safeParse({text: 'x', focus: 'none'}).success).toBe(true)
+    expect(typeParams.safeParse({ref: 'e1', text: 'x', mode: 'fancy'}).success).toBe(false)
+    expect(typeParams.safeParse({ref: 'e1', text: 'x', focus: 'teleport'}).success).toBe(false)
+  })
+
+  test('press_key requires a key and validates modifiers', () => {
+    expect(pressKeyParams.safeParse({key: 'Enter'}).success).toBe(true)
+    expect(pressKeyParams.safeParse({key: 'a', modifiers: ['ctrl']}).success).toBe(true)
+    expect(pressKeyParams.safeParse({key: 'Backspace', modifiers: ['ctrl', 'shift'], ref: 'e3'}).success).toBe(true)
+    expect(pressKeyParams.safeParse({}).success).toBe(false)
+    expect(pressKeyParams.safeParse({key: 'a', modifiers: ['hyper']}).success).toBe(false)
+    expect(pressKeyParams.safeParse({key: 'a', ref: 'nope'}).success).toBe(false)
+  })
+
+  test('click_at accepts button/clickCount/modifiers and keeps old shape working', () => {
+    expect(clickAtParams.safeParse({x: 1, y: 2, coordinates: true}).success).toBe(true)
+    expect(clickAtParams.safeParse({x: 1, y: 2, coordinates: true, button: 'right'}).success).toBe(true)
+    expect(clickAtParams.safeParse({x: 1, y: 2, coordinates: true, button: 'middle', clickCount: 2}).success).toBe(true)
+    expect(clickAtParams.safeParse({x: 1, y: 2, coordinates: true, clickCount: 2, modifiers: ['ctrl']}).success).toBe(true)
+    expect(clickAtParams.safeParse({x: 1, y: 2, coordinates: true, button: 'side'}).success).toBe(false)
+    expect(clickAtParams.safeParse({x: 1, y: 2, coordinates: true, clickCount: 4}).success).toBe(false)
+  })
+
+  test('snapshot accepts query/rootRef/limit filters', () => {
+    expect(snapshotParams.safeParse({}).success).toBe(true)
+    expect(snapshotParams.safeParse({query: 'code editor'}).success).toBe(true)
+    expect(snapshotParams.safeParse({rootRef: 'e12'}).success).toBe(true)
+    expect(snapshotParams.safeParse({limit: 5000}).success).toBe(true)
+    expect(snapshotParams.safeParse({query: 'x', rootRef: 'e1', limit: 100}).success).toBe(true)
+    expect(snapshotParams.safeParse({rootRef: 'x1'}).success).toBe(false)
+    expect(snapshotParams.safeParse({limit: 0}).success).toBe(false)
+    expect(snapshotParams.safeParse({query: ''}).success).toBe(false)
+  })
+
+  test('navigate accepts waitUntil strategy', () => {
+    expect(navigateParams.safeParse({url: 'https://example.com', waitUntil: 'networkidle'}).success).toBe(true)
+    expect(navigateParams.safeParse({url: 'https://example.com', waitUntil: 'load'}).success).toBe(true)
+    expect(navigateParams.safeParse({url: 'https://example.com', waitUntil: 'forever'}).success).toBe(false)
+  })
+
+  test('get_text validates ref and result shape', () => {
+    expect(getTextParams.safeParse({ref: 'e4'}).success).toBe(true)
+    expect(getTextParams.safeParse({ref: 'e4', tabId: 2}).success).toBe(true)
+    expect(getTextParams.safeParse({}).success).toBe(false)
+    expect(getTextResult.safeParse({text: 'hello', truncated: false}).success).toBe(true)
+    expect(getTextResult.safeParse({text: 'hello'}).success).toBe(false)
+  })
+
+  test('takeover_tab requires a positive tabId', () => {
+    expect(takeoverTabParams.safeParse({tabId: 5}).success).toBe(true)
+    expect(takeoverTabParams.safeParse({}).success).toBe(false)
   })
 
   test('scroll validates direction and caps amount', () => {

@@ -22,7 +22,9 @@ export interface TargetTab {
 function notManaged(tabId: number): Error {
   return toolError(
     TOOL_ERROR_CODES.TAB_NOT_MANAGED,
-    `tab ${tabId} is outside the 'Chrome in Harness' group. Only tabs inside the group (created via tab_new) can be operated.`,
+    `tab ${tabId} is outside the 'Chrome in Harness' group. Only tabs inside the group (created via tab_new) can be operated. ` +
+      `If the user explicitly asked to work in this tab, call takeover_tab(tabId: ${tabId}) to move it into the managed group ` +
+      '(its URL must already be in the allowlist).',
   )
 }
 

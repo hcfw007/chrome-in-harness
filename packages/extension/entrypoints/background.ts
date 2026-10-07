@@ -5,6 +5,7 @@ import {connect} from '../lib/connection'
 import {consoleBuffer} from '../lib/console-buffer'
 import {networkBuffer} from '../lib/network-buffer'
 import {refStore} from '../lib/ref-store'
+import {forgetVersionFloor} from '../lib/snapshot-version'
 
 const KEEPALIVE_ALARM = 'keepalive'
 const KEEPALIVE_PERIOD_MINUTES = 0.5
@@ -39,12 +40,13 @@ export default defineBackground(() => {
     if (changeInfo.url !== undefined) refStore.invalidate(tabId)
   })
 
-  // tab 关闭 → 释放其快照
+  // tab 关闭 → 释放其快照与版本水位线缓存
   chrome.tabs.onRemoved.addListener((tabId) => {
     refStore.invalidate(tabId)
     consoleBuffer.clear(tabId)
     networkBuffer.clear(tabId)
     dropCollectors(tabId)
+    forgetVersionFloor(tabId)
   })
 
   console.log('[background] Chrome in Harness service worker started')

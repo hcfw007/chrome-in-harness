@@ -2,12 +2,13 @@ import {setGroupsState} from '../lib/tab-group'
 import {addAllowlistDomain} from './allowlist'
 import {readConsole, readNetwork} from './debug'
 import {evaluateScript} from './evaluate'
-import {click, clickAt, hover, scroll, typeText} from './interact'
+import {getText} from './get-text'
+import {click, clickAt, hover, pressKey, scroll, typeText} from './interact'
 import {ping} from './ping'
 import {requestPermission} from './request-permission'
 import {screenshot} from './screenshot'
 import {navigate, snapshot} from './snapshot'
-import {tabClose, tabList, tabNew, tabSelect} from './tabs'
+import {tabClose, tabList, tabNew, tabSelect, takeoverTab} from './tabs'
 import type {ToolHandler} from './types'
 import {wait} from './wait'
 
@@ -45,15 +46,18 @@ register('click', click)
 register('click_at', clickAt)
 register('hover', hover)
 register('type', typeText)
+register('press_key', pressKey)
 register('scroll', scroll)
 register('screenshot', screenshot)
 register('tab_list', tabList)
 register('tab_new', tabNew)
 register('tab_select', tabSelect)
 register('tab_close', tabClose)
+register('takeover_tab', takeoverTab)
 register('read_console', readConsole)
 register('read_network', readNetwork)
 register('wait', wait)
 register('add_allowlist_domain', addAllowlistDomain)
 register('evaluate_script', evaluateScript)
 register('request_permission', requestPermission)
+register('get_text', getText)

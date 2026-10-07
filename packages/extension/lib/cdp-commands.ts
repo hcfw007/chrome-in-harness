@@ -4,9 +4,11 @@ import {TOOL_ERROR_CODES} from '@chrome-in-harness/protocol'
 
 import {parseAxNodes} from './ax-types'
 import type {AxNode} from './ax-types'
-import {send, subscribeEvents, waitForEvent} from './cdp'
+import {send, subscribeEvents, unsubscribeEvents, waitForEvent} from './cdp'
 import {consoleBuffer} from './console-buffer'
 import type {ConsoleLevel} from './console-buffer'
+import type {InputModifier, KeyDispatch} from './keymap'
+import {keyDownText, modifierBitmask} from './keymap'
 import {networkBuffer} from './network-buffer'
 
 /** 每个 debugger 会话 enable 一次的 domain 集合（SW 内存级）。 */
@@ -141,18 +143,92 @@ export async function getFullAxTree(tabId: number): Promise<AxNode[]> {
   return parseAxNodes(result.nodes)
 }
 
-/** 导航并等待 load 事件；超时返回 loaded=false（内容可能不完整但不报错）。 */
-export async function navigateAndWaitLoad(
+/** 导航等待策略：load 事件 / domcontentloaded(+500ms 静默) / networkidle(+500ms 静默)。 */
+export type NavigateWaitUntil = 'load' | 'domcontentloaded' | 'networkidle'
+
+const NAVIGATE_TIMEOUT_MS = 8_000
+const SETTLE_MS = 500
+
+/**
+ * 导航并按策略等待；信号未到返回 loaded=false（内容可能不完整但不报错）。
+ * domcontentloaded/networkidle 都带 500ms 静默期，让 SPA 的首波渲染落定。
+ */
+export async function navigateAndWait(
   tabId: number,
   url: string,
-  timeoutMs = 8000,
+  waitUntil: NavigateWaitUntil = 'domcontentloaded',
 ): Promise<{loaded: boolean}> {
   await enableOnce(tabId, 'Page', 'Page.enable')
-  const [loadEvent] = await Promise.all([
-    waitForEvent(tabId, 'Page.loadEventFired', timeoutMs),
-    send(tabId, 'Page.navigate', {url}),
-  ])
-  return {loaded: loadEvent !== null}
+  if (waitUntil === 'load') {
+    const [loadEvent] = await Promise.all([
+      waitForEvent(tabId, 'Page.loadEventFired', NAVIGATE_TIMEOUT_MS),
+      send(tabId, 'Page.navigate', {url}),
+    ])
+    return {loaded: loadEvent !== null}
+  }
+
+  await enableOnce(tabId, 'Network', 'Network.enable')
+
+  if (waitUntil === 'domcontentloaded') {
+    const [dclEvent] = await Promise.all([
+      waitForEvent(tabId, 'Page.domContentEventFired', NAVIGATE_TIMEOUT_MS),
+      send(tabId, 'Page.navigate', {url}),
+    ])
+    if (dclEvent === null) return {loaded: false}
+    await sleep(SETTLE_MS)
+    return {loaded: true}
+  }
+
+  // networkidle：DCL 后等「请求静默窗」——500ms 内无新请求即视为 idle。
+  // 不做在途计数对账：重定向/SW 托管的请求可能没有配对的完成事件，计数会漂移卡死。
+  const quiet = new RequestQuietTracker(tabId)
+  try {
+    const [dclEvent] = await Promise.all([
+      waitForEvent(tabId, 'Page.domContentEventFired', NAVIGATE_TIMEOUT_MS),
+      send(tabId, 'Page.navigate', {url}),
+    ])
+    if (dclEvent === null) return {loaded: false}
+    const idle = await quiet.waitUntilQuiet(SETTLE_MS, NAVIGATE_TIMEOUT_MS + SETTLE_MS)
+    return {loaded: idle}
+  } finally {
+    quiet.dispose()
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** 请求静默窗：记录最近一次新请求（排除重定向续发）的时间，静默 holdMs 即 idle。 */
+class RequestQuietTracker {
+  private lastRequestStart = Date.now()
+  private readonly unsubscribers: Array<() => void> = []
+
+  constructor(tabId: number) {
+    const onRequest = (raw: unknown): void => {
+      const params = raw as {redirectResponse?: unknown}
+      // redirectResponse 存在 = 同一 requestId 的重定向续发，不算新请求
+      if (params.redirectResponse !== undefined) return
+      this.lastRequestStart = Date.now()
+    }
+    subscribeEvents(tabId, 'Network.requestWillBeSent', onRequest)
+    this.unsubscribers.push(() => unsubscribeEvents(tabId, 'Network.requestWillBeSent', onRequest))
+  }
+
+  /** 连续 holdMs 无新请求 → true；totalTimeoutMs 内未达成 → false。 */
+  async waitUntilQuiet(holdMs: number, totalTimeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + totalTimeoutMs
+    while (Date.now() < deadline) {
+      if (Date.now() - this.lastRequestStart >= holdMs) return true
+      await sleep(50)
+    }
+    return false
+  }
+
+  dispose(): void {
+    for (const unsub of this.unsubscribers) unsub()
+    this.unsubscribers.length = 0
+  }
 }
 
 export async function getTabTitle(tabId: number): Promise<string | undefined> {
@@ -233,9 +309,24 @@ export async function elementCenter(
   return {x: average(xs), y: average(ys)}
 }
 
-export async function dispatchClick(tabId: number, x: number, y: number): Promise<void> {
-  await send(tabId, 'Input.dispatchMouseEvent', {type: 'mousePressed', x, y, button: 'left', clickCount: 1})
-  await send(tabId, 'Input.dispatchMouseEvent', {type: 'mouseReleased', x, y, button: 'left', clickCount: 1})
+export interface ClickOptions {
+  readonly button?: 'left' | 'right' | 'middle'
+  readonly clickCount?: number
+  readonly modifiers?: readonly InputModifier[]
+}
+
+export async function dispatchClick(tabId: number, x: number, y: number, options: ClickOptions = {}): Promise<void> {
+  const button = options.button ?? 'left'
+  const clickCount = options.clickCount ?? 1
+  const params = {
+    x,
+    y,
+    button,
+    clickCount,
+    modifiers: modifierBitmask(options.modifiers),
+  }
+  await send(tabId, 'Input.dispatchMouseEvent', {type: 'mousePressed', ...params})
+  await send(tabId, 'Input.dispatchMouseEvent', {type: 'mouseReleased', ...params})
 }
 
 export async function dispatchHover(tabId: number, x: number, y: number): Promise<void> {
@@ -256,10 +347,78 @@ export async function insertText(tabId: number, text: string): Promise<void> {
   await send(tabId, 'Input.insertText', {text})
 }
 
-export async function pressEnter(tabId: number): Promise<void> {
-  const base = {key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13}
-  await send(tabId, 'Input.dispatchKeyEvent', {type: 'rawKeyDown', ...base})
+/** 一个键的完整 press：keyDown（组合键无 text，走 rawKeyDown）+ keyUp。 */
+export async function dispatchKey(tabId: number, info: KeyDispatch, modifiers: readonly InputModifier[]): Promise<void> {
+  const mask = modifierBitmask(modifiers)
+  const text = keyDownText(info, mask)
+  const base = {
+    key: info.key,
+    code: info.code,
+    windowsVirtualKeyCode: info.windowsVirtualKeyCode,
+    nativeVirtualKeyCode: info.windowsVirtualKeyCode,
+    modifiers: mask,
+  }
+  await send(tabId, 'Input.dispatchKeyEvent', {
+    type: text === undefined ? 'rawKeyDown' : 'keyDown',
+    ...base,
+    ...(text !== undefined ? {text, unmodifiedText: text} : {}),
+  })
   await send(tabId, 'Input.dispatchKeyEvent', {type: 'keyUp', ...base})
+}
+
+/** 快捷键序列（如 Ctrl+A / Delete 组成的清空操作）。 */
+export async function pressKeyCombo(
+  tabId: number,
+  info: KeyDispatch,
+  modifiers: readonly InputModifier[],
+): Promise<void> {
+  await dispatchKey(tabId, info, modifiers)
+}
+
+/** DOM.focus：把 ref 指向的元素设为焦点（不点击、不动光标位置）。 */
+export async function focusNode(tabId: number, backendNodeId: number): Promise<void> {
+  await send(tabId, 'DOM.focus', {backendNodeId})
+}
+
+/** 按 ref 读取子树 innerText（get_text 的取数路径）。 */
+export async function resolveNodeInnerText(tabId: number, backendNodeId: number): Promise<string> {
+  // CDP 返回形状：{object: RemoteObject}（属性名就叫 object）
+  const resolveOnce = async (): Promise<string | undefined> => {
+    const resolved = await send<{object?: {objectId?: string}}>(tabId, 'DOM.resolveNode', {backendNodeId})
+    return resolved.object?.objectId
+  }
+  let objectId = await resolveOnce()
+  if (objectId === undefined) {
+    // DOM agent 未绑定该文档（新会话/导航后）：getDocument 重绑后再试一次
+    await getDocumentRoot(tabId)
+    objectId = await resolveOnce()
+  }
+  if (objectId === undefined) {
+    throw new Error('could not resolve the referenced element to a JS object (it may be stale); call snapshot again')
+  }
+  const result = await send<{result?: {value?: unknown}}>(tabId, 'Runtime.callFunctionOn', {
+    objectId,
+    functionDeclaration:
+      // Monaco 这类编辑器的 ref 是隐藏 textarea（innerText 恒空，文本在兄弟节点），
+      // 自身读不到时向上找最近一个非空 innerText 的祖先（最多 4 层）
+      'function () {' +
+      '  var node = this, text = String(this.innerText || "");' +
+      '  for (var i = 0; i < 4 && text.trim().length === 0; i++) {' +
+      '    node = node.parentElement; if (!node) break;' +
+      '    text = String(node.innerText || "");' +
+      '  }' +
+      '  return text;' +
+      '}',
+    returnByValue: true,
+  })
+  return typeof result.result?.value === 'string' ? result.result.value : ''
+}
+
+/** DOM.getDocument（pierce 全深），供弱交互扫描做文档序对齐。 */
+export async function getDocumentRoot(tabId: number): Promise<unknown> {
+  await enableOnce(tabId, 'DOM', 'DOM.enable')
+  const result = await send<{root?: unknown}>(tabId, 'DOM.getDocument', {depth: -1, pierce: true})
+  return result.root
 }
 
 export async function captureScreenshot(tabId: number): Promise<string> {

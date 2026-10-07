@@ -1,8 +1,11 @@
-/** 浏览器操作工具：navigate / snapshot / click / hover / type / scroll / screenshot。 */
+/** 浏览器操作工具：navigate / snapshot / click / hover / type / press_key / scroll / screenshot / get_text。 */
 import {
   clickAtParams,
   clickParams,
+  getTextParams,
+  getTextResult,
   hoverParams,
+  pressKeyParams,
   waitParamsShape,
   waitResult,
   navigateParams,
@@ -21,11 +24,22 @@ import type {ToolDef} from './types.js'
 const navigate = defineTool({
   name: 'navigate',
   title: 'Navigate to a URL',
-  description: 'Navigate the tab to a URL and wait for the page load (up to 8s).',
+  description:
+    'Navigate the tab to a URL and wait for the chosen readiness signal. ' +
+    'waitUntil: "load" (wait for the load event), "domcontentloaded" (default; DOM ready + 500ms quiet), ' +
+    '"networkidle" (DOM ready + no in-flight network requests for 500ms). ' +
+    'Waits up to ~8s; a timeout is reported but the page is often still usable — snapshot to check.',
   schema: navigateParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'navigate', args, navigateResult)
-    const suffix = result.loaded ? '' : ' (load event timed out; content may be incomplete)'
+    const strategy = result.waitUntil ?? 'domcontentloaded'
+    const suffix = result.loaded
+      ? ''
+      : strategy === 'networkidle'
+        ? ' (readiness signal timed out; content may be incomplete or network never went idle)'
+        : strategy === 'load'
+          ? ' (load event timed out; content may be incomplete)'
+          : ' (DOMContentLoaded timed out; content may be incomplete)'
     return toolText(`Navigated to ${result.url}${suffix}${result.title ? ` — "${result.title}"` : ''}`)
   },
 })
@@ -34,7 +48,12 @@ const snapshot = defineTool({
   name: 'snapshot',
   title: 'Accessibility snapshot with refs',
   description:
-    'Render the page accessibility tree as an indented text snapshot. Interactive elements carry [ref=eN] ids; pass them to click/hover/type/scroll. Re-snapshot after navigation — refs go stale.',
+    'Render the page accessibility tree as an indented text snapshot. Interactive elements carry [ref=eN] ids; ' +
+    'weakly-interactive custom controls (clickable div/li/span without ARIA roles) are marked [weak] but also usable. ' +
+    'Pass refs to click/hover/type/press_key/scroll/get_text. Re-snapshot after navigation — refs go stale (most tools auto-recover once). ' +
+    'Optional filters for long pages: query — case-insensitive regex over role/name (matching nodes keep their ancestor chain); ' +
+    'rootRef — render only that node\'s subtree; limit — character budget. ' +
+    'Refs are never dropped by truncation: on overflow, text-only subtrees are hidden first.',
   schema: snapshotParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'snapshot', args, snapshotResult)
@@ -72,13 +91,17 @@ const clickAt = defineTool({
     'Click at raw viewport coordinates (CSS pixels). Escape hatch for targets a ref cannot reach: ' +
     'elements inside iframes/Canvas, and icon-only containers with no accessible name (e.g. a "..." menu). ' +
     'Requires coordinates:true to signal intent. ' +
+    'Options: button "left"|"right"|"middle" (right-click opens context menus), clickCount 2 for double-click, ' +
+    'modifiers ["ctrl"|"alt"|"shift"|"meta"] for chords. ' +
     'To find coordinates, first locate the element with evaluate_script, e.g. ' +
     'evaluate_script expression `(()=>{const r=document.querySelector(".some-btn").getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`, ' +
     'then click_at with that x/y. Prefer click(ref) when a ref exists.',
   schema: clickAtParams.shape,
   async run(args, call) {
     await callBridge(call, 'click_at', args, okResult)
-    return toolText(`Clicked at (${args.x}, ${args.y})`)
+    const detail = args.button && args.button !== 'left' ? ` ${args.button}` : ''
+    const count = args.clickCount && args.clickCount > 1 ? ` x${args.clickCount}` : ''
+    return toolText(`Clicked${detail}${count} at (${args.x}, ${args.y})`)
   },
 })
 
@@ -86,11 +109,58 @@ const type = defineTool({
   name: 'type',
   title: 'Type text into an element by ref',
   description:
-    'Click the element (focusing it), type the text, and optionally press Enter when submit is true.',
+    'Type text into an element. Default behavior: click the element (focusing it), insert the text, ' +
+    'and press Enter when submit is true. ' +
+    'mode:"verbatim" inserts the whole text in one shot (Input.insertText) with NO key events — ' +
+    'bypasses Monaco auto-indent and bracket auto-closing; use this for multi-line indented code. ' +
+    'submit is rejected in verbatim mode (call press_key instead). ' +
+    'clear:true empties the field first (focus + Ctrl+A + Delete). ' +
+    'focus:"none" skips the implicit click: with ref it only DOM.focuses the element (caret stays put — ' +
+    'avoids Monaco jumping to end-of-line at the click point); without ref it types into whatever is focused.',
   schema: typeParams.shape,
   async run(args, call) {
     await callBridge(call, 'type', args, okResult)
-    return toolText(`Typed into ${args.ref}${args.submit ? ' and pressed Enter' : ''}`)
+    const bits: string[] = []
+    if (args.mode === 'verbatim') bits.push('verbatim')
+    if (args.clear === true) bits.push('cleared first')
+    if (args.focus === 'none') bits.push('no click')
+    const suffix = bits.length > 0 ? ` (${bits.join(', ')})` : ''
+    return toolText(
+      `Typed into ${args.ref ?? 'focused element'}${suffix}${args.submit ? ' and pressed Enter' : ''}`,
+    )
+  },
+})
+
+const pressKey = defineTool({
+  name: 'press_key',
+  title: 'Press a key or key combination',
+  description:
+    'Press a single key, optionally with modifiers. key examples: Enter, Backspace, Delete, Escape, Tab, ' +
+    'ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, Insert, F1-F12, Space, or a single character (a, A, !, :, space). ' +
+    'modifiers: ["ctrl"|"alt"|"shift"|"meta"] — e.g. press_key(key:"a", modifiers:["ctrl"]) selects all. ' +
+    'Pass ref to scroll the element into view, DOM.focus it (no click), then press; otherwise the key goes to the current focus. ' +
+    'Use this for editing existing content (Backspace/Ctrl+A/arrow keys) instead of embedding control chars in type.',
+  schema: pressKeyParams.shape,
+  async run(args, call) {
+    await callBridge(call, 'press_key', args, okResult)
+    const mods = args.modifiers !== undefined && args.modifiers.length > 0 ? `${args.modifiers.join('+')}+` : ''
+    const target = args.ref ? ` on ${args.ref}` : ''
+    return toolText(`Pressed ${mods}${args.key}${target}`)
+  },
+})
+
+const getText = defineTool({
+  name: 'get_text',
+  title: 'Read an element\'s text by ref',
+  description:
+    'Return the innerText of the element with the given ref (its whole subtree), capped at ~8KB ' +
+    '(truncated:true when clipped). Lightweight way to verify editor/content state without a full snapshot. ' +
+    'If the element itself has no text (e.g. Monaco\'s hidden textarea), the nearest ancestor with visible text is used.',
+  schema: getTextParams.shape,
+  async run(args, call) {
+    const result = await callBridge(call, 'get_text', args, getTextResult)
+    const suffix = result.truncated ? '… (TRUNCATED)' : ''
+    return toolText(result.text + suffix)
   },
 })
 
@@ -146,6 +216,8 @@ export const BROWSER_TOOL_DEFS: readonly ToolDef[] = [
   clickAt,
   hover,
   type,
+  pressKey,
+  getText,
   scroll,
   screenshot,
 ]

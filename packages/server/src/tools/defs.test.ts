@@ -44,10 +44,16 @@ describe('browser defs', () => {
     expect(fake.received[0]).toEqual({tool: 'navigate', params: {url: 'https://example.com/'}})
   })
 
-  test('navigate flags a load timeout', async () => {
+  test('navigate flags a readiness timeout with the default strategy', async () => {
     const fake = fakeBridge({url: 'https://slow.example/', loaded: false})
     const content = await run(byName('navigate'), {url: 'https://slow.example/'}, fake.call)
     expect(content[0]).toMatchObject({type: 'text'})
+    expect((content[0] as {text: string}).text).toContain('DOMContentLoaded timed out')
+  })
+
+  test('navigate flags a load-event timeout when waitUntil is load', async () => {
+    const fake = fakeBridge({url: 'https://slow.example/', loaded: false, waitUntil: 'load'})
+    const content = await run(byName('navigate'), {url: 'https://slow.example/', waitUntil: 'load'}, fake.call)
     expect((content[0] as {text: string}).text).toContain('load event timed out')
   })
 
@@ -103,6 +109,70 @@ describe('browser defs', () => {
     expect(fake.received).toEqual([{tool: 'wait', params: {text: 'hello'}}])
     expect(content).toEqual([{type: 'text', text: 'Condition matched.'}])
   })
+
+  test('type forwards mode/clear/focus and confirms with detail', async () => {
+    const fake = fakeBridge({})
+    const content = await run(
+      byName('type'),
+      {ref: 'e7', text: 'code', mode: 'verbatim', clear: true},
+      fake.call,
+    )
+    expect(fake.received[0]).toEqual({tool: 'type', params: {ref: 'e7', text: 'code', mode: 'verbatim', clear: true}})
+    expect(content).toEqual([{type: 'text', text: 'Typed into e7 (verbatim, cleared first)'}])
+  })
+
+  test('type without ref targets the focused element (focus:none path)', async () => {
+    const fake = fakeBridge({})
+    const content = await run(byName('type'), {text: 'x', focus: 'none'}, fake.call)
+    expect(fake.received[0]).toEqual({tool: 'type', params: {text: 'x', focus: 'none'}})
+    expect(content).toEqual([{type: 'text', text: 'Typed into focused element (no click)'}])
+  })
+
+  test('press_key forwards key, modifiers and ref', async () => {
+    const fake = fakeBridge({})
+    const content = await run(byName('press_key'), {key: 'a', modifiers: ['ctrl'], ref: 'e2'}, fake.call)
+    expect(fake.received[0]).toEqual({tool: 'press_key', params: {key: 'a', modifiers: ['ctrl'], ref: 'e2'}})
+    expect(content).toEqual([{type: 'text', text: 'Pressed ctrl+a on e2'}])
+  })
+
+  test('get_text renders text and truncation marker', async () => {
+    const fake = fakeBridge({text: 'print(42)', truncated: false})
+    const content = await run(byName('get_text'), {ref: 'e1'}, fake.call)
+    expect(fake.received[0]).toEqual({tool: 'get_text', params: {ref: 'e1'}})
+    expect(content).toEqual([{type: 'text', text: 'print(42)'}])
+    const truncatedFake = fakeBridge({text: 'x', truncated: true})
+    const truncated = await run(byName('get_text'), {ref: 'e1'}, truncatedFake.call)
+    expect(truncated).toEqual([{type: 'text', text: 'x… (TRUNCATED)'}])
+  })
+
+  test('click_at forwards button/clickCount/modifiers', async () => {
+    const fake = fakeBridge({})
+    const content = await run(
+      byName('click_at'),
+      {x: 10, y: 20, coordinates: true, button: 'right', clickCount: 2, modifiers: ['ctrl']},
+      fake.call,
+    )
+    expect(fake.received[0]).toEqual({
+      tool: 'click_at',
+      params: {x: 10, y: 20, coordinates: true, button: 'right', clickCount: 2, modifiers: ['ctrl']},
+    })
+    expect(content).toEqual([{type: 'text', text: 'Clicked right x2 at (10, 20)'}])
+  })
+
+  test('snapshot forwards query/rootRef/limit filters', async () => {
+    const fake = fakeBridge({snapshot: '- textbox "Code editor" [ref=e1]', version: 9, url: 'https://e.com', truncated: false})
+    await run(byName('snapshot'), {query: 'Code editor', limit: 5000}, fake.call)
+    expect(fake.received[0]).toEqual({tool: 'snapshot', params: {query: 'Code editor', limit: 5000}})
+    await run(byName('snapshot'), {rootRef: 'e3'}, fake.call)
+    expect(fake.received[1]).toEqual({tool: 'snapshot', params: {rootRef: 'e3'}})
+  })
+
+  test('navigate forwards waitUntil and reflects networkidle timeouts', async () => {
+    const fake = fakeBridge({url: 'https://e.com', loaded: false, waitUntil: 'networkidle'})
+    const content = await run(byName('navigate'), {url: 'https://e.com', waitUntil: 'networkidle'}, fake.call)
+    expect(fake.received[0]).toEqual({tool: 'navigate', params: {url: 'https://e.com', waitUntil: 'networkidle'}})
+    expect((content[0] as {text: string}).text).toContain('network never went idle')
+  })
 })
 
 describe('tab defs', () => {
@@ -131,6 +201,15 @@ describe('tab defs', () => {
     const tabNew = byName('tab_new')
     const content = await run(tabNew, {url: 'https://example.com'}, fake.call)
     expect(content).toEqual([{type: 'text', text: 'Opened tab 9 at https://example.com'}])
+  })
+
+  test('takeover_tab confirms the tab is managed', async () => {
+    const fake = fakeBridge({tabId: 4, url: 'https://leetcode.com/problems/two-sum/'})
+    const content = await run(byName('takeover_tab'), {tabId: 4}, fake.call)
+    expect(fake.received[0]).toEqual({tool: 'takeover_tab', params: {tabId: 4}})
+    expect(content).toEqual([
+      {type: 'text', text: 'Tab 4 is now managed (https://leetcode.com/problems/two-sum/).'},
+    ])
   })
 })
 

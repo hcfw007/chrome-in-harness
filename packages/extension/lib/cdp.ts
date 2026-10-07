@@ -143,6 +143,16 @@ export function subscribeEvents(tabId: number, method: string, cb: (params: unkn
   eventSubscribers.set(key, list)
 }
 
+/** 移除一条持续订阅（临时订阅用完即拆，避免累积）。 */
+export function unsubscribeEvents(tabId: number, method: string, cb: (params: unknown) => void): void {
+  const key = eventKey(tabId, method)
+  const list = eventSubscribers.get(key)
+  if (list === undefined) return
+  const index = list.indexOf(cb)
+  if (index !== -1) list.splice(index, 1)
+  if (list.length === 0) eventSubscribers.delete(key)
+}
+
 /** 清掉某 tab 的所有订阅与等待者（detach 时调用，避免重连后重复订阅累积）。 */
 export function clearTabState(tabId: number): void {
   const prefix = `${tabId}:`

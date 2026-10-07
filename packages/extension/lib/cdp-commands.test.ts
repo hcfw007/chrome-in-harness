@@ -16,9 +16,13 @@ function installChrome(overrides: {
   windowState?: string
   windowsUpdate?: (windowId: number, props: unknown) => Promise<void>
   tabsGetThrows?: boolean
-}): {tabsUpdate: ReturnType<typeof vi.fn>; windowsUpdate: ReturnType<typeof vi.fn>} {
+}): {
+  tabsUpdate: ReturnType<typeof vi.fn>
+  windowsUpdate: (windowId: number, props: unknown) => Promise<void>
+} {
   const tabsUpdate = vi.fn(async () => ({}))
-  const windowsUpdate = overrides.windowsUpdate ?? vi.fn(async () => {})
+  const windowsUpdate: (windowId: number, props: unknown) => Promise<void> =
+    overrides.windowsUpdate ?? vi.fn(async () => {})
   ;(globalThis as unknown as {chrome: unknown}).chrome = {
     tabs: {
       get: async () => {

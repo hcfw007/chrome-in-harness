@@ -258,4 +258,128 @@ describe('renderAxSnapshot', () => {
     tree[0]!.childIds.push('1')
     expect(renderAxSnapshot(tree)).toEqual(renderAxSnapshot(tree))
   })
+
+  test('query keeps matching nodes and their ancestor chain, drops other branches', () => {
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'page'}),
+      node({nodeId: '1', role: 'region', name: 'comments'}),
+      node({nodeId: '2', role: 'textbox', name: 'Code editor', backendDOMNodeId: 21}),
+      node({nodeId: '3', role: 'region', name: 'sidebar'}),
+      node({nodeId: '4', role: 'link', name: 'ad', backendDOMNodeId: 22}),
+    ]
+    tree[0]!.childIds.push('1', '3')
+    tree[1]!.childIds.push('2')
+    tree[3]!.childIds.push('4')
+    const result = renderAxSnapshot(tree, {query: /code editor/i})
+    expect(result.text).toContain('Code editor')
+    expect(result.text).toContain('comments') // 祖先链保留
+    expect(result.text).not.toContain('ad') // 无关分支裁掉
+    expect(result.text).not.toContain('sidebar')
+    expect(result.refs.map((r) => r.backendDOMNodeId)).toEqual([21])
+  })
+
+  test('query with no matches renders empty and reports no truncation', () => {
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'page'}),
+      node({nodeId: '1', role: 'link', name: 'a', backendDOMNodeId: 11}),
+    ]
+    tree[0]!.childIds.push('1')
+    const result = renderAxSnapshot(tree, {query: /nothing/i})
+    expect(result.text).toBe('')
+    expect(result.refs).toEqual([])
+    expect(result.truncated).toBe(false)
+  })
+
+  test('rootBackendNodeId renders only that subtree with refs renumbered from e1', () => {
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'page'}),
+      node({nodeId: '1', role: 'region', name: 'editor area', backendDOMNodeId: 33}),
+      node({nodeId: '2', role: 'textbox', name: 'Code editor', backendDOMNodeId: 31}),
+      node({nodeId: '3', role: 'link', name: 'elsewhere', backendDOMNodeId: 32}),
+    ]
+    tree[0]!.childIds.push('1', '3')
+    tree[1]!.childIds.push('2')
+    const full = renderAxSnapshot(tree)
+    expect(full.refs.map((r) => r.ref)).toEqual(['e1', 'e2']) // 全树：region 非 ref 候选，textbox/link 各一
+
+    const subtree = renderAxSnapshot(tree, {rootBackendNodeId: 33})
+    expect(subtree.text).toContain('editor area')
+    expect(subtree.text).toContain('Code editor')
+    expect(subtree.text).not.toContain('elsewhere')
+    expect(subtree.refs.map((r) => r.ref)).toEqual(['e1'])
+  })
+
+  test('rootBackendNodeId throws when the node is not in the tree', () => {
+    const tree = [node({nodeId: '0', role: 'RootWebArea', name: 'page'})]
+    expect(() => renderAxSnapshot(tree, {rootBackendNodeId: 9999})).toThrow(/rootRef not found/)
+  })
+
+  test('respects a smaller character limit', () => {
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'root'}),
+      node({nodeId: '1', role: 'link', name: 'a', backendDOMNodeId: 91}),
+      node({nodeId: '2', role: 'link', name: 'b', backendDOMNodeId: 92}),
+    ]
+    tree[0]!.childIds.push('1', '2')
+    const tight = renderAxSnapshot(tree, {maxChars: 20})
+    expect(tight.text.length).toBeLessThan(200)
+    expect(tight.truncated).toBe(true)
+  })
+
+  test('truncation hides text-only subtrees first so interactive refs survive', () => {
+    // 回归：长页面里编辑器 ref 落在被截掉的尾部 → essentials 重渲后必须保住
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'root'}),
+    ]
+    // 20 段大文本（无任何交互节点）
+    for (let i = 1; i <= 20; i += 1) {
+      tree.push(node({nodeId: `t${i}`, role: 'paragraph', name: 'comment '.repeat(40)}))
+      tree[0]!.childIds.push(`t${i}`)
+    }
+    // 页面尾部的编辑器（正是 LeetCode 场景里被截掉的那个）
+    tree.push(node({nodeId: 'ed', role: 'textbox', name: 'Code editor', backendDOMNodeId: 777}))
+    tree[0]!.childIds.push('ed')
+    const result = renderAxSnapshot(tree, {maxChars: 1200})
+    const editorRef = result.refs.find((r) => r.backendDOMNodeId === 777)
+    expect(editorRef).toBeDefined()
+    expect(result.text).toContain('Code editor')
+  })
+
+  test('focusable generic/list-item-ish nodes get weak refs with a [weak] marker', () => {
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'root'}),
+      node({nodeId: '1', role: 'generic', name: 'Python3', focusable: true, backendDOMNodeId: 41}),
+      node({nodeId: '2', role: 'generic', name: 'plain', backendDOMNodeId: 42}),
+    ]
+    tree[0]!.childIds.push('1', '2')
+    const result = renderAxSnapshot(tree)
+    expect(result.text).toContain('[weak]')
+    expect(result.refs).toHaveLength(1)
+    expect(result.refs[0]).toMatchObject({backendDOMNodeId: 41, weak: true})
+  })
+
+  test('DOM weak candidates (cursor:pointer divs) get refs marked weak', () => {
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'root'}),
+      node({nodeId: '1', role: 'generic', name: 'Python3', backendDOMNodeId: 51}),
+    ]
+    tree[0]!.childIds.push('1')
+    const result = renderAxSnapshot(tree, {
+      weakCandidates: new Map([[51, {tag: 'div', text: 'Python3'}]]),
+    })
+    expect(result.text).toContain('[weak]')
+    expect(result.refs[0]).toMatchObject({backendDOMNodeId: 51, weak: true})
+  })
+
+  test('weak candidates are not compacted away even when anonymous', () => {
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'root'}),
+      node({nodeId: '1', role: 'generic', backendDOMNodeId: 61}),
+    ]
+    tree[0]!.childIds.push('1')
+    const result = renderAxSnapshot(tree, {
+      weakCandidates: new Map([[61, {tag: 'div', text: 'lang item'}]]),
+    })
+    expect(result.refs.map((r) => r.backendDOMNodeId)).toEqual([61])
+  })
 })

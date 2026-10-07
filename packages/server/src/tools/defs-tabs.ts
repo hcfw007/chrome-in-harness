@@ -6,6 +6,8 @@ import {
   tabListResult,
   tabNewParams,
   tabSelectParams,
+  takeoverTabParams,
+  takeoverTabResult,
 } from '@chrome-in-harness/protocol'
 import {z} from 'zod'
 import {callBridge, defineTool, toolText} from './types.js'
@@ -69,4 +71,19 @@ const tabClose = defineTool({
   },
 })
 
-export const TAB_TOOL_DEFS: readonly ToolDef[] = [ping, tabList, tabNew, tabSelect, tabClose]
+const takeoverTab = defineTool({
+  name: 'takeover_tab',
+  title: 'Take over an already-open tab',
+  description:
+    'Move an existing (user-opened) tab into the "Chrome in Harness" group so tools can operate on it. ' +
+    'SECURITY-SENSITIVE: only call this when the user explicitly asked to work in that tab, never on your own initiative. ' +
+    'The tab URL must already be in the allowlist (otherwise the call fails and suggests request_permission). ' +
+    'The user can revoke at any time by dragging the tab out of the group. Returns {tabId, url}.',
+  schema: takeoverTabParams.shape,
+  async run(args, call) {
+    const result = await callBridge(call, 'takeover_tab', args, takeoverTabResult)
+    return toolText(`Tab ${result.tabId} is now managed (${result.url}).`)
+  },
+})
+
+export const TAB_TOOL_DEFS: readonly ToolDef[] = [ping, tabList, tabNew, tabSelect, tabClose, takeoverTab]

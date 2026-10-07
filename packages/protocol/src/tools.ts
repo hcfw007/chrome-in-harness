@@ -25,14 +25,30 @@ export const TOOL_ERROR_CODES = {
 
 export type ToolErrorCode = (typeof TOOL_ERROR_CODES)[keyof typeof TOOL_ERROR_CODES]
 
+/** 快照文本默认字符上限（与 extension 的 MAX_CHARS 保持一致）。 */
+export const MAX_SNAPSHOT_CHARS = 60_000
+
 const tabIdField = {tabId: TAB_ID.optional()} as const
+
+/** 键盘修饰键（press_key / click_at / type 共用）。 */
+export const INPUT_MODIFIERS = ['ctrl', 'alt', 'shift', 'meta'] as const
+export const inputModifiersSchema = z.array(z.enum(INPUT_MODIFIERS)).max(4)
 
 export const navigateParams = z.object({
   url: z.string().url(),
+  waitUntil: z.enum(['load', 'domcontentloaded', 'networkidle']).optional(),
   ...tabIdField,
 })
 
-export const snapshotParams = z.object(tabIdField)
+export const snapshotParams = z.object({
+  /** 按 role/name 大小写不敏感正则过滤（保留命中节点的祖先链以维持结构）。 */
+  query: z.string().min(1).max(200).optional(),
+  /** 只输出该 ref 指向节点的子树。 */
+  rootRef: z.string().regex(REF_PATTERN).optional(),
+  /** 快照文本的字符预算（覆盖默认 60KB）。 */
+  limit: z.number().int().positive().max(MAX_SNAPSHOT_CHARS).optional(),
+  ...tabIdField,
+})
 
 export const clickParams = z.object({
   ref: z.string().regex(REF_PATTERN),
@@ -42,11 +58,15 @@ export const clickParams = z.object({
 /**
  * 坐标点击：ref 无法命中时（iframe/Canvas/无 ref 的 icon-only 容器等）的兜底。
  * 坐标是视口 CSS 像素；必须显式传 `coordinates: true` 作为意图标记。
+ * button 支持左/中/右键；clickCount 支持双击/三击；modifiers 支持组合键。
  */
 export const clickAtParams = z.object({
   x: z.number().finite(),
   y: z.number().finite(),
   coordinates: z.literal(true),
+  button: z.enum(['left', 'right', 'middle']).optional(),
+  clickCount: z.number().int().min(1).max(3).optional(),
+  modifiers: inputModifiersSchema.optional(),
   ...tabIdField,
 })
 
@@ -55,11 +75,45 @@ export const hoverParams = z.object({
   ...tabIdField,
 })
 
+export const pressKeyParams = z.object({
+  /** 键名（Enter/Backspace/Escape/Tab/Home/End/ArrowUp…/F1-F12）或单个字符（a、A、!、空格）。 */
+  key: z.string().min(1).max(24),
+  modifiers: inputModifiersSchema.optional(),
+  /** 先把该 ref 元素滚进视野并聚焦，再按键；缺省则向当前焦点元素按键。 */
+  ref: z.string().regex(REF_PATTERN).optional(),
+  ...tabIdField,
+})
+
+/**
+ * type：默认行为与旧版完全一致（点击 ref 元素中心 → Input.insertText → submit 时按 Enter）。
+ * mode='verbatim' 一次性整段插入且拒绝 submit（避免 Monaco 自动缩进/括号自动补全）；
+ * clear=true 输入前先 Ctrl+A + Delete 清空；focus='none' 跳过隐式点击。
+ */
 export const typeParams = z.object({
-  ref: z.string().regex(REF_PATTERN),
+  ref: z.string().regex(REF_PATTERN).optional(),
   text: z.string().min(1).max(10_000),
   submit: z.boolean().optional(),
+  mode: z.enum(['insert', 'verbatim']).optional(),
+  clear: z.boolean().optional(),
+  focus: z.enum(['none', 'click-ref']).optional(),
   ...tabIdField,
+})
+
+export const getTextParams = z.object({
+  ref: z.string().regex(REF_PATTERN),
+  ...tabIdField,
+})
+
+export const getTextResult = z.object({
+  text: z.string(),
+  truncated: z.boolean(),
+})
+
+export const takeoverTabParams = z.object({tabId: TAB_ID})
+
+export const takeoverTabResult = z.object({
+  tabId: z.number().int(),
+  url: z.string(),
 })
 
 export const scrollParams = z.object({
@@ -179,6 +233,7 @@ export const navigateResult = z.object({
   url: z.string(),
   title: z.string().optional(),
   loaded: z.boolean(),
+  waitUntil: z.string().optional(),
 })
 
 export const snapshotResult = z.object({
@@ -221,12 +276,14 @@ export const TOOL_NAMES = [
   'click',
   'hover',
   'type',
+  'press_key',
   'scroll',
   'screenshot',
   'tab_list',
   'tab_new',
   'tab_select',
   'tab_close',
+  'takeover_tab',
   'read_console',
   'read_network',
   'wait',
@@ -234,6 +291,7 @@ export const TOOL_NAMES = [
   'evaluate_script',
   'request_permission',
   'click_at',
+  'get_text',
 ] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]

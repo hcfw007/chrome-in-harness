@@ -1,10 +1,21 @@
-/** 标签页管理：list / new / select / close。tab_new 校验目标 URL、归入 Chrome in Harness 组；close 失效 ref。 */
+/** 标签页管理：list / new / select / close / takeover。tab_new 校验目标 URL、归入 Chrome in Harness 组；close 失效 ref。 */
 import {TOOL_ERROR_CODES} from '@chrome-in-harness/protocol'
 import {refStore} from '../lib/ref-store'
+import {isUrlAllowed} from '../lib/site-filter'
 import {GROUP_COLOR, GROUP_TITLE, isTabManaged} from '../lib/tab-group'
+import {getAllowlist} from '../lib/whitelist'
 import {authorizeNavigate, toolError} from './access'
 
 import type {ToolHandler} from './types'
+
+function describeHost(url: string): string {
+  try {
+    const host = new URL(url).hostname
+    return host.length > 0 ? host : url
+  } catch {
+    return url
+  }
+}
 
 /**
  * tab_select / tab_close 的组边界：只允许操作 Chrome in Harness 组内的 tab。
@@ -80,4 +91,32 @@ export const tabClose: ToolHandler = async (params) => {
   })
   refStore.invalidate(tabId)
   return {}
+}
+
+/**
+ * takeover_tab：用户显式授权后把已打开的 tab 接管进受管组（P2）。
+ * 授权交互沿用域名白名单模式：SECURITY-SENSITIVE，仅当用户明确要求在该 tab
+ * 工作时调用；URL 必须已在白名单内（域边界不放宽），归组后用户随时可拖出撤销。
+ */
+export const takeoverTab: ToolHandler = async (params) => {
+  const {tabId} = params as {tabId: number}
+  const tab = await chrome.tabs.get(tabId).catch(() => undefined)
+  if (tab === undefined || tab.id === undefined) throw new Error(`tab ${tabId} not found`)
+  const url = tab.url ?? ''
+  const rules = await getAllowlist()
+  if (!isUrlAllowed(url, rules)) {
+    throw toolError(
+      TOOL_ERROR_CODES.DOMAIN_NOT_ALLOWED,
+      `${describeHost(url)} is not in the allowlist, so the tab cannot be taken over. ` +
+        'Ask the user to confirm, then call request_permission or add_allowlist_domain for the domain and retry.',
+    )
+  }
+  if (await isTabManaged(tabId)) {
+    return {tabId, url}
+  }
+  await groupTab(tabId, tab.windowId)
+  if (!(await isTabManaged(tabId))) {
+    throw new Error(`failed to move tab ${tabId} into the managed group (grouping was blocked); try again`)
+  }
+  return {tabId, url}
 }
