@@ -42,9 +42,11 @@ describe('params schemas', () => {
 
   test('click rejects refs outside the e<N> pattern', () => {
     expect(clickParams.safeParse({ref: 'e12'}).success).toBe(true)
+    expect(clickParams.safeParse({ref: 'e12-a3f91'}).success).toBe(true) // 带快照 token
     expect(clickParams.safeParse({ref: 'e0'}).success).toBe(false)
     expect(clickParams.safeParse({ref: '012'}).success).toBe(false)
     expect(clickParams.safeParse({ref: 'x1'}).success).toBe(false)
+    expect(clickParams.safeParse({ref: 'e1-A3F91'}).success).toBe(false) // token 只允许小写字母数字
     expect(clickParams.safeParse({}).success).toBe(false)
   })
 
@@ -160,9 +162,11 @@ describe('P3 schemas', () => {
     expect(waitParams.safeParse({text: 'hello'}).success).toBe(true)
     expect(waitParams.safeParse({selector: '#x'}).success).toBe(true)
     expect(waitParams.safeParse({urlContains: '/docs'}).success).toBe(true)
+    expect(waitParams.safeParse({editorRendered: true}).success).toBe(true)
     expect(waitParams.safeParse({}).success).toBe(false)
     expect(waitParams.safeParse({text: 'a', selector: '#x'}).success).toBe(false)
     expect(waitParams.safeParse({text: ''}).success).toBe(false)
+    expect(waitParams.safeParse({editorRendered: false, text: 'a'}).success).toBe(false)
   })
 
   test('wait bounds timeoutMs', () => {

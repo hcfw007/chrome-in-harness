@@ -1,5 +1,5 @@
 import {describe, expect, test} from 'vitest'
-import {renderAxSnapshot} from './ax-snapshot'
+import {applyRefToken, renderAxSnapshot} from './ax-snapshot'
 import {parseAxNodes} from './ax-types'
 import type {AxNode} from './ax-types'
 
@@ -381,5 +381,22 @@ describe('renderAxSnapshot', () => {
       weakCandidates: new Map([[61, {tag: 'div', text: 'lang item'}]]),
     })
     expect(result.refs.map((r) => r.backendDOMNodeId)).toEqual([61])
+  })
+
+  test('applyRefToken rewrites refs in text and seeds; old refs would be rejected cross-era', () => {
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'root'}),
+      node({nodeId: '1', role: 'button', name: 'Submit', backendDOMNodeId: 71}),
+      node({nodeId: '2', role: 'textbox', name: 'Editor', backendDOMNodeId: 72}),
+    ]
+    tree[0]!.childIds.push('1', '2')
+    const render = renderAxSnapshot(tree)
+    expect(render.text).toContain('[ref=e1]')
+    const tokened = applyRefToken(render, 'a3f91')
+    expect(tokened.text).toContain('[ref=e1-a3f91]')
+    expect(tokened.text).not.toMatch(/\[ref=e\d\]/)
+    expect(tokened.refs.map((r) => r.ref)).toEqual(['e1-a3f91', 'e2-a3f91'])
+    expect(tokened.refs[0]).toMatchObject({backendDOMNodeId: 71, role: 'button'})
+    expect(tokened.truncated).toBe(render.truncated)
   })
 })

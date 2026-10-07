@@ -7,7 +7,9 @@ import {
   dispatchKey,
   dispatchWheel,
   elementCenter,
+  evaluateJson,
   focusNode,
+  getViewportMetrics,
   insertText,
   scrollIntoViewIfNeeded,
   viewportCenter,
@@ -15,6 +17,7 @@ import {
 import type {ClickOptions} from '../lib/cdp-commands'
 import {resolveKey} from '../lib/keymap'
 import type {InputModifier} from '../lib/keymap'
+import {planVerbatim} from '../lib/verbatim'
 import {authorizeTab} from './access'
 import {withRef} from './ref-recovery'
 
@@ -23,6 +26,8 @@ import type {ToolHandler} from './types'
 /**
  * 输入类工具的公共前置：解析 tab → 激活为可见 → attach。
  * 后台 tab 上 CDP `Input.*` 会被静默丢弃，必须先把 tab 激活到前台。
+ * 视口度量不在此处缓存：ref 类工具每次经 elementCenter 现采坐标；
+ * click_at 的绝对坐标在工具内现采度量做越界校验（见下）。
  */
 async function prepareInputTab(tabId?: number): Promise<{tabId: number; url: string}> {
   const target = await authorizeTab(tabId)
@@ -37,12 +42,27 @@ async function locate(tabId: number, backendDOMNodeId: number): Promise<{x: numb
   return elementCenter(tabId, backendDOMNodeId)
 }
 
+/** 页面上是否有打开的对话框（ARIA dialog 或原生 <dialog>）。 */
+const HAS_OPEN_DIALOG =
+  '(function(){return !!(document.querySelector(\'[role="dialog"]\') || document.querySelector("dialog[open]"))})()'
+
 export const click: ToolHandler = async (params) => {
   const {ref, tabId} = params as {ref: string; tabId?: number}
   const target = await prepareInputTab(tabId)
   await withRef(target.tabId, ref, async (entry) => {
     const {x, y} = await locate(target.tabId, entry.backendDOMNodeId)
+    // 对话框守卫：弹窗按钮常因 React 重渲染在测量与点击之间挪位导致点击丢失。
+    // 点击前有对话框、点击后仍在 → 换键盘激活（focus + Enter）重试一次。
+    const dialogBefore = await evaluateJson<boolean>(target.tabId, HAS_OPEN_DIALOG)
     await dispatchClick(target.tabId, x, y)
+    if (dialogBefore) {
+      const dialogAfter = await evaluateJson<boolean>(target.tabId, HAS_OPEN_DIALOG)
+      if (dialogAfter) {
+        await focusNode(target.tabId, entry.backendDOMNodeId)
+        const enter = resolveKey('Enter')
+        if (enter.ok) await dispatchKey(target.tabId, enter.info, [])
+      }
+    }
   })
   return {}
 }
@@ -50,7 +70,8 @@ export const click: ToolHandler = async (params) => {
 /**
  * 坐标点击（ref 命中不了时的兜底：iframe / Canvas / 无 ref 的 icon-only 容器）。
  * 坐标是视口 CSS 像素；直接走 CDP Input.*，不做元素解析。
- * button 支持右键/中键，clickCount 支持双击，modifiers 支持组合键。
+ * button 支持左/中/右键，clickCount 支持双击，modifiers 支持组合键。
+ * 越界坐标显式报错（现采视口度量，无任何跨调用缓存）——静默落点是第二轮战报的教训。
  */
 export const clickAt: ToolHandler = async (params) => {
   const {x, y, tabId, button, clickCount, modifiers} = params as {
@@ -62,6 +83,19 @@ export const clickAt: ToolHandler = async (params) => {
     modifiers?: InputModifier[]
   }
   const target = await prepareInputTab(tabId)
+  const metrics = await getViewportMetrics(target.tabId)
+  if (metrics.width <= 0 || metrics.height <= 0) {
+    throw new Error(
+      'WINDOW_NOT_INTERACTIVE: the viewport reads 0x0 (window minimized or tab hidden), ' +
+        'input would be silently dropped. Restore the window and retry.',
+    )
+  }
+  if (x < 0 || y < 0 || x > metrics.width || y > metrics.height) {
+    throw new Error(
+      `click_at (${x}, ${y}) is outside the viewport (${metrics.width}x${metrics.height} @dpr ${metrics.dpr}). ` +
+        'Coordinates are viewport CSS pixels — re-measure with evaluate_script getBoundingClientRect and retry.',
+    )
+  }
   const options: ClickOptions = {
     ...(button !== undefined ? {button} : {}),
     ...(clickCount !== undefined ? {clickCount} : {}),
@@ -115,23 +149,23 @@ export const typeText: ToolHandler = async (params) => {
   const target = await prepareInputTab(raw.tabId)
 
   /**
-   * verbatim：逐行 insertText + 行间 Enter + Shift+Home+Delete。
+   * verbatim：按计划器逐步执行（文本逐字原样，前导空白/换行不做任何特殊处理）。
    * Chromium 会把多行 insertText 在渲染层拆成逐行 input 事件，换行走 typed-Enter
    * 路径 → Monaco autoIndent 逐行叠加缩进（实测 LeetCode Monaco 同款问题）。
-   * 所以换行必须自己处理：Enter（带 '\r' 字符事件才生效）产生自动缩进后，
-   * Shift+Home 选中缩进（空白行 smart-Home 直达列 1）再 Delete 抹掉，
+   * 行间序列：Enter（带 '\r' 字符事件才生效）产生自动缩进后，Shift+Home 选中缩进
+   * （光标在缩进后、行内容前，选中段恰为缩进本身）再 Delete 抹掉，
    * 下一行的缩进由文本自带，保证逐字符还原。
    */
   const typeVerbatim = async (): Promise<void> => {
     if (raw.clear === true) await clearFocused(target.tabId)
-    const lines = raw.text.replace(/\r\n?/g, '\n').split('\n')
+    const steps = planVerbatim(raw.text)
     const enter = resolveKey('Enter')
     const home = resolveKey('Home')
     const del = resolveKey('Delete')
-    for (let i = 0; i < lines.length; i += 1) {
-      const line = lines[i] ?? ''
-      if (line.length > 0) await insertText(target.tabId, line)
-      if (i < lines.length - 1 && enter.ok && home.ok && del.ok) {
+    for (const step of steps) {
+      if (step.kind === 'text') {
+        await insertText(target.tabId, step.value)
+      } else if (enter.ok && home.ok && del.ok) {
         await dispatchKey(target.tabId, enter.info, [])
         await dispatchKey(target.tabId, home.info, ['shift'])
         await dispatchKey(target.tabId, del.info, [])

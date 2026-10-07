@@ -54,6 +54,11 @@ Chrome 扩展 (MV3, WXT)  --WebSocket client-->  本地 server (Node, ws on 127.
 
 两种方式：**npm 快速安装**（推荐）或 **GitHub Release / 源码**。
 
+> **MCP 升级后必须重启客户端会话**：opencode / Claude Code 等客户端在会话启动时注册工具 schema，
+> 运行中不会随服务端 `tools/list` 变化热更新（不监听 `tools/list_changed`）。服务端升级新参数/新工具后，
+> 老会话仍按旧 schema 校验并拦截新参数——重启会话即可。ref 格式同样注意：快照 ref 带 token
+> 后缀（如 `e3-a7k2`），跨会话/跨 worker 重启的旧 ref 会被显式拒绝（`STALE_REF`），重新 snapshot 即可。
+
 ### npm 快速安装
 
 ```bash

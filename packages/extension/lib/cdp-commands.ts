@@ -421,6 +421,41 @@ export async function getDocumentRoot(tabId: number): Promise<unknown> {
   return result.root
 }
 
+export interface ViewportMetrics {
+  readonly width: number
+  readonly height: number
+  readonly dpr: number
+}
+
+/** 现采视口度量（每次调用都现读，无跨调用缓存——SW 重启后不存在旧值可复用）。 */
+export async function getViewportMetrics(tabId: number): Promise<ViewportMetrics> {
+  const raw = await evaluateJson<{w?: number; h?: number; dpr?: number}>(
+    tabId,
+    '({w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio})',
+  )
+  return {
+    width: typeof raw.w === 'number' ? raw.w : 0,
+    height: typeof raw.h === 'number' ? raw.h : 0,
+    dpr: typeof raw.dpr === 'number' ? raw.dpr : 1,
+  }
+}
+
+/**
+ * 按元素读可访问性 value（ARIA 语义文本，非 DOM innerText）。
+ * Monaco 这类虚拟滚动编辑器的 .view-lines 只含可见行，DOM 读数会以偏概全；
+ * AX 树的 textbox value 携带完整模型文本，是唯一可靠读数。
+ */
+export async function getAxNodeValue(tabId: number, backendNodeId: number): Promise<string | undefined> {
+  await enableOnce(tabId, 'Accessibility', 'Accessibility.enable')
+  const result = await send<{nodes?: unknown}>(tabId, 'Accessibility.getPartialAXTree', {
+    backendNodeId,
+    fetchRelatives: false,
+  })
+  const nodes = parseAxNodes(result.nodes)
+  const node = nodes.find((n) => n.backendDOMNodeId === backendNodeId) ?? nodes[0]
+  return node?.value
+}
+
 export async function captureScreenshot(tabId: number): Promise<string> {
   const result = await send<{data?: string}>(tabId, 'Page.captureScreenshot', {format: 'png'})
   if (result.data === undefined) throw new Error('screenshot returned no data')

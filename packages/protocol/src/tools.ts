@@ -5,8 +5,12 @@
  */
 import {z} from 'zod'
 
-/** ref 编号格式：e1、e2、…（快照 DFS 前序编号）。 */
-export const REF_PATTERN = /^e[1-9]\d*$/
+/**
+ * ref 编号格式：`e<N>-<token>`（如 e3-a7k2）。token 编码 worker 代数 + 快照版本，
+ * SW 重启/快照更替后旧 ref 一律显式 STALE_REF，杜绝静默错点。
+ * 兼容：无 token 的裸 `e<N>` 仍可通过 schema（旧会话缓存），但 extension 侧会显式拒绝。
+ */
+export const REF_PATTERN = /^e[1-9]\d*(-[a-z0-9]{2,12})?$/
 
 export const TAB_ID = z.number().int().positive()
 
@@ -174,18 +178,20 @@ export const readNetworkResult = z.object({
   entries: z.array(networkEntrySchema),
 })
 
-/** 三条件恰传其一：raw shape 给 server 注册 inputSchema，refine 后的给 extension 校验。 */
+/** 四条件恰传其一：raw shape 给 server 注册 inputSchema，refine 后的给 extension 校验。 */
 export const waitParamsShape = {
   text: z.string().min(1).optional(),
   selector: z.string().min(1).optional(),
   urlContains: z.string().min(1).optional(),
+  /** Monaco 类编辑器渲染完成：存在高度 > 40px 的 .monaco-editor 且其内有非空 view-line。 */
+  editorRendered: z.boolean().optional(),
   timeoutMs: z.number().int().positive().max(30_000).optional(),
   ...tabIdField,
 }
 
 export const waitParams = z.object(waitParamsShape).refine(
-  (p) => [p.text, p.selector, p.urlContains].filter((v) => v !== undefined).length === 1,
-  {message: 'exactly one of text / selector / urlContains is required'},
+  (p) => [p.text, p.selector, p.urlContains, p.editorRendered].filter((v) => v !== undefined).length === 1,
+  {message: 'exactly one of text / selector / urlContains / editorRendered is required'},
 )
 
 export const waitResult = z.object({

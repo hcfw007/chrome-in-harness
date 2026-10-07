@@ -48,9 +48,11 @@ const snapshot = defineTool({
   name: 'snapshot',
   title: 'Accessibility snapshot with refs',
   description:
-    'Render the page accessibility tree as an indented text snapshot. Interactive elements carry [ref=eN] ids; ' +
-    'weakly-interactive custom controls (clickable div/li/span without ARIA roles) are marked [weak] but also usable. ' +
-    'Pass refs to click/hover/type/press_key/scroll/get_text. Re-snapshot after navigation — refs go stale (most tools auto-recover once). ' +
+    'Render the page accessibility tree as an indented text snapshot. Interactive elements carry [ref=eN-<token>] ids ' +
+    '(the token encodes worker generation + snapshot version: refs from before a service-worker restart or an older ' +
+    'snapshot are rejected with STALE_REF instead of silently remapped — re-snapshot to continue). ' +
+    'Weakly-interactive custom controls (clickable div/li/span without ARIA roles) are marked [weak] but also usable. ' +
+    'Pass refs to click/hover/type/press_key/scroll/get_text. ' +
     'Optional filters for long pages: query — case-insensitive regex over role/name (matching nodes keep their ancestor chain); ' +
     'rootRef — render only that node\'s subtree; limit — character budget. ' +
     'Refs are never dropped by truncation: on overflow, text-only subtrees are hidden first.',
@@ -65,7 +67,10 @@ const snapshot = defineTool({
 const click = defineTool({
   name: 'click',
   title: 'Click an element by ref',
-  description: 'Click the element with the given ref from the latest snapshot.',
+  description:
+    'Click the element with the given ref from the latest snapshot. ' +
+    'When the click targets a button inside an open dialog and the dialog is still present afterwards, ' +
+    'the click is retried once via keyboard activation (focus + Enter) — dialog buttons sometimes move between measure and click.',
   schema: clickParams.shape,
   async run(args, call) {
     await callBridge(call, 'click', args, okResult)
@@ -93,6 +98,7 @@ const clickAt = defineTool({
     'Requires coordinates:true to signal intent. ' +
     'Options: button "left"|"right"|"middle" (right-click opens context menus), clickCount 2 for double-click, ' +
     'modifiers ["ctrl"|"alt"|"shift"|"meta"] for chords. ' +
+    'Out-of-viewport coordinates fail with an explicit error (viewport metrics are re-measured per call). ' +
     'To find coordinates, first locate the element with evaluate_script, e.g. ' +
     'evaluate_script expression `(()=>{const r=document.querySelector(".some-btn").getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`, ' +
     'then click_at with that x/y. Prefer click(ref) when a ref exists.',
@@ -111,8 +117,9 @@ const type = defineTool({
   description:
     'Type text into an element. Default behavior: click the element (focusing it), insert the text, ' +
     'and press Enter when submit is true. ' +
-    'mode:"verbatim" inserts the whole text in one shot (Input.insertText) with NO key events — ' +
-    'bypasses Monaco auto-indent and bracket auto-closing; use this for multi-line indented code. ' +
+    'Text is inserted verbatim — leading/trailing whitespace and newlines are preserved with no trimming. ' +
+    'mode:"verbatim" guarantees exact reproduction in code editors: per-line insertion with newline handling that ' +
+    'bypasses Monaco auto-indent and bracket auto-closing — use this for multi-line indented code. ' +
     'submit is rejected in verbatim mode (call press_key instead). ' +
     'clear:true empties the field first (focus + Ctrl+A + Delete). ' +
     'focus:"none" skips the implicit click: with ref it only DOM.focuses the element (caret stays put — ' +
@@ -153,9 +160,10 @@ const getText = defineTool({
   name: 'get_text',
   title: 'Read an element\'s text by ref',
   description:
-    'Return the innerText of the element with the given ref (its whole subtree), capped at ~8KB ' +
-    '(truncated:true when clipped). Lightweight way to verify editor/content state without a full snapshot. ' +
-    'If the element itself has no text (e.g. Monaco\'s hidden textarea), the nearest ancestor with visible text is used.',
+    'Return the text of the element with the given ref, capped at ~8KB (truncated:true when clipped). ' +
+    'Reads the accessibility value first (ARIA semantics) — for virtual-scrolling editors like Monaco this is the ' +
+    'FULL buffer text, whereas DOM innerText only covers visible lines. Falls back to innerText (nearest text-bearing ' +
+    'ancestor included) for nodes without an AX value, e.g. buttons. Lightweight way to verify editor/content state.',
   schema: getTextParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'get_text', args, getTextResult)
@@ -192,15 +200,20 @@ const wait = defineTool({
   name: 'wait',
   title: 'Wait for a condition',
   description:
-    'Wait until a condition holds on the page: text appears in the body, a CSS selector matches, or the URL contains a substring. Exactly one condition per call. Returns {matched, timedOut} — a timeout is not an error; snapshot afterwards to see the current state.',
-  // 注册无 refine 的 shape（refine 会破坏 tools/list 的 JSON schema）；三选一的约束在 run 里落地。
+    'Wait until a condition holds on the page: text appears in the body, a CSS selector matches, the URL contains a substring, ' +
+    'or editorRendered:true (a Monaco-style editor exists with height > 40px and a non-empty visible view-line — ' +
+    'guards against collapsed/hidden editor instances after SPA soft navigation). Exactly one condition per call. ' +
+    'Returns {matched, timedOut} — a timeout is not an error; snapshot afterwards to see the current state.',
+  // 注册无 refine 的 shape（refine 会破坏 tools/list 的 JSON schema）；四选一的约束在 run 里落地。
   schema: waitParamsShape,
   async run(args, call) {
-    const conditions = [args.text, args.selector, args.urlContains].filter(
+    const conditions = [args.text, args.selector, args.urlContains, args.editorRendered].filter(
       (v) => v !== undefined,
     ).length
     if (conditions !== 1) {
-      throw new Error(`exactly one of text / selector / urlContains is required (got ${conditions})`)
+      throw new Error(
+        `exactly one of text / selector / urlContains / editorRendered is required (got ${conditions})`,
+      )
     }
     const result = await callBridge(call, 'wait', args, waitResult)
     if (result.matched) return toolText('Condition matched.')

@@ -355,3 +355,15 @@ function finalize(state: RenderState, footer: string | undefined): SnapshotRende
   }
   return {text, refs: state.refs, truncated: footer !== undefined}
 }
+
+/**
+ * 给渲染结果追加快照 token：`[ref=eN]` → `[ref=eN-<token>]`。
+ * token 编码 worker 代 + 快照版本，跨代/跨版本的旧 ref 会被显式拒绝（防静默错点）。
+ */
+export function applyRefToken(render: SnapshotRender, token: string): SnapshotRender {
+  return {
+    text: render.text.replace(/\[ref=(e[1-9]\d*)\]/g, `[ref=$1-${token}]`),
+    refs: render.refs.map((r) => ({...r, ref: `${r.ref}-${token}`})),
+    truncated: render.truncated,
+  }
+}

@@ -1,8 +1,9 @@
 /**
- * 快照版本水位线：chrome.storage.session 按 tab 持久化最近一次快照版本号。
- * SW 被杀后内存里的 RefStore 归零，下次 snapshot 从水位线 +1 继续，
- * 保证调用方看到的版本号单调递增、可比较新旧。
- * session storage 在浏览器关闭时清空（版本回退到 1 也无害：那时全部调用方也重启了）。
+ * 快照版本水位线：chrome.storage.session 按 tab 持久化「最近已用版本号」。
+ * 下一次快照取 max(内存版本, 水位线) + 1——SW 空闲回收（session storage 存活）
+ * 与导航 invalidate 后版本都严格递增，同 token 绝不跨快照复用。
+ * 扩展重载/浏览器关闭会清 session storage：token 里的 worker 代随之更换，
+ * 旧 ref 仍会被显式拒绝，不依赖版本号判断新旧。
  */
 
 const FLOOR_KEY = 'snapshot.version.floor.v1'

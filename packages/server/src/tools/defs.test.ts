@@ -100,7 +100,17 @@ describe('browser defs', () => {
     await expect(
       run(byName('wait'), {text: 'a', selector: '#x'}, fake.call),
     ).rejects.toThrow('exactly one')
+    await expect(
+      run(byName('wait'), {editorRendered: true, urlContains: '/x'}, fake.call),
+    ).rejects.toThrow('exactly one')
     expect(fake.received).toHaveLength(0)
+  })
+
+  test('wait forwards editorRendered and renders matched', async () => {
+    const fake = fakeBridge({matched: true, timedOut: false})
+    const content = await run(byName('wait'), {editorRendered: true}, fake.call)
+    expect(fake.received).toEqual([{tool: 'wait', params: {editorRendered: true}}])
+    expect(content).toEqual([{type: 'text', text: 'Condition matched.'}])
   })
 
   test('wait forwards a single condition and renders matched', async () => {

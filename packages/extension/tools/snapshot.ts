@@ -1,5 +1,5 @@
 /** snapshot / navigate 工具实现。takeSnapshot 为 ref 自动恢复共用。 */
-import {renderAxSnapshot} from '../lib/ax-snapshot'
+import {applyRefToken, renderAxSnapshot} from '../lib/ax-snapshot'
 import type {RefSeed} from '../lib/ax-snapshot'
 import {ensureAttached} from '../lib/cdp'
 import {
@@ -18,6 +18,7 @@ import {
   mapWeakCandidates,
   parseWeakScanResult,
 } from '../lib/weak-interactive'
+import {snapshotToken} from '../lib/worker-era'
 import {authorizeNavigate, authorizeTab, resolveTargetTab} from './access'
 
 import type {ToolHandler} from './types'
@@ -32,14 +33,16 @@ export interface TakeSnapshotOptions {
 export interface SnapshotState {
   readonly text: string
   readonly version: number
+  readonly token: string
   readonly url: string
   readonly truncated: boolean
   readonly refs: readonly RefSeed[]
 }
 
 /**
- * 取一次 a11y 快照：渲染、落 refStore（版本取持久化水位线保证单调）、更新水位线。
- * snapshot 工具与 STALE_REF/NO_SNAPSHOT 自动恢复共用这一条路径。
+ * 取一次 a11y 快照：渲染、追加快照 token（worker 代 + 版本）、落 refStore、更新水位线。
+ * token 让跨 SW 重启/跨快照的旧 ref 显式失效，杜绝静默错点。
+ * snapshot 工具与恢复层共用这一条路径，保证 ref 编号/token 全局一致。
  */
 export async function takeSnapshot(tabId: number, url: string, options: TakeSnapshotOptions = {}): Promise<SnapshotState> {
   const nodes = await getFullAxTree(tabId)
@@ -53,10 +56,13 @@ export async function takeSnapshot(tabId: number, url: string, options: TakeSnap
     maxChars: options.maxChars,
     weakCandidates,
   })
-  const floor = await versionFloor(tabId)
-  const version = refStore.store(tabId, url, render.refs, floor)
+  // 先定版本（严格大于任何已用版本，导航/重启都不复用），token 编码进每个 ref
+  const version = refStore.nextVersion(tabId, await versionFloor(tabId))
+  const token = snapshotToken(version)
+  const tokened = applyRefToken(render, token)
+  refStore.store(tabId, url, token, tokened.refs, version)
   await saveVersionFloor(tabId, version)
-  return {text: render.text, version, url, truncated: render.truncated, refs: render.refs}
+  return {text: tokened.text, version, token, url, truncated: tokened.truncated, refs: tokened.refs}
 }
 
 /** 弱交互候选扫描（cursor:pointer/onclick 的 div/li/span）；任何失败都降级为空。 */
@@ -90,18 +96,14 @@ export const snapshot: ToolHandler = async (params) => {
 
   let rootBackendNodeId: number | undefined
   if (raw.rootRef !== undefined) {
+    // rootRef 与其他 ref 同一套 token 校验：跨代/过期显式报错，不按编号盲匹配
     const resolved = refStore.resolve(target.tabId, raw.rootRef)
     if (resolved.kind !== 'ok') {
-      // rootRef 失效：自动重取一次全量快照刷新 refStore 后再解析
-      await takeSnapshot(target.tabId, target.url)
-      const retry = refStore.resolve(target.tabId, raw.rootRef)
-      if (retry.kind !== 'ok') {
-        throw new Error(`rootRef ${raw.rootRef} not found in the current accessibility tree; call snapshot first`)
-      }
-      rootBackendNodeId = retry.entry.backendDOMNodeId
-    } else {
-      rootBackendNodeId = resolved.entry.backendDOMNodeId
+      throw new Error(
+        `rootRef ${raw.rootRef} is not usable (${resolved.kind === 'no_snapshot' ? 'no snapshot in this worker era' : 'stale'}); call snapshot first`,
+      )
     }
+    rootBackendNodeId = resolved.entry.backendDOMNodeId
   }
 
   const state = await takeSnapshot(target.tabId, target.url, {

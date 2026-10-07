@@ -1,4 +1,4 @@
-/** wait 工具：注入页面内 Promise 等条件（text / selector / urlContains 三选一）。 */
+/** wait 工具：注入页面内 Promise 等条件（text / selector / urlContains / editorRendered 四选一）。 */
 import {ensureAttached} from '../lib/cdp'
 import {activateTab, evaluateJson} from '../lib/cdp-commands'
 import {authorizeTab} from './access'
@@ -9,9 +9,29 @@ interface WaitParams {
   readonly text?: string
   readonly selector?: string
   readonly urlContains?: string
+  readonly editorRendered?: boolean
   readonly timeoutMs?: number
   readonly tabId?: number
 }
+
+/**
+ * Monaco 类编辑器渲染完成：容器高度 > 40px（防 SPA 软导航后塌缩成 5×5px 的隐藏实例）
+ * 且其内存在非空 view-line（虚拟滚动下可见行有内容即算渲染完成）。
+ */
+const EDITOR_RENDERED_CHECK =
+  '(function(){' +
+  'var eds=document.querySelectorAll(".monaco-editor");' +
+  'for(var i=0;i<eds.length;i++){' +
+  'var ed=eds[i];' +
+  'if(ed.getBoundingClientRect().height<=40)continue;' +
+  'var lines=ed.querySelectorAll(".view-line");' +
+  'for(var j=0;j<lines.length;j++){' +
+  'var t=lines[j].textContent;' +
+  'if(typeof t==="string"&&t.length>0)return true;' +
+  '}' +
+  '}' +
+  'return false' +
+  '})()'
 
 /** 页面内执行的等待脚本：轮询条件，页面内 setTimeout 兜底超时。 */
 function buildWaitScript(params: WaitParams, timeoutMs: number): string {
@@ -20,7 +40,9 @@ function buildWaitScript(params: WaitParams, timeoutMs: number): string {
       ? `document.body !== null && document.body.innerText.includes(${JSON.stringify(params.text)})`
       : params.selector !== undefined
         ? `document.querySelector(${JSON.stringify(params.selector)}) !== null`
-        : `location.href.includes(${JSON.stringify(params.urlContains ?? '')})`
+        : params.editorRendered === true
+          ? EDITOR_RENDERED_CHECK
+          : `location.href.includes(${JSON.stringify(params.urlContains ?? '')})`
   return `(async () => {
     const started = Date.now()
     while (Date.now() - started < ${timeoutMs}) {
