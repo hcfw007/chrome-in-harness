@@ -17,6 +17,7 @@ import {
   snapshotParams,
   snapshotResult,
   typeParams,
+  typeResult,
 } from '@chrome-in-harness/protocol'
 import {callBridge, defineTool, toolImage, toolText} from './types.js'
 import type {ToolDef} from './types.js'
@@ -53,7 +54,10 @@ const snapshot = defineTool({
     'snapshot are rejected with STALE_REF instead of silently remapped — re-snapshot to continue). ' +
     'Weakly-interactive custom controls (clickable div/li/span without ARIA roles) are marked [weak] but also usable. ' +
     'Pass refs to click/hover/type/press_key/scroll/get_text. ' +
-    'Optional filters for long pages: query — case-insensitive regex over role/name (matching nodes keep their ancestor chain); ' +
+    'Optional filters for long pages: query — case-insensitive regex over role/name; interactive hits ' +
+    '(buttons/links/textboxes/options + weak controls) are listed first with their subtrees, text-only hits ' +
+    'render as single lines after them (same-rank order is DOM order) — so query "Submit" surfaces the button, ' +
+    'not comment posts that merely mention it; ' +
     'rootRef — render only that node\'s subtree; limit — character budget. ' +
     'Refs are never dropped by truncation: on overflow, text-only subtrees are hidden first.',
   schema: snapshotParams.shape,
@@ -123,14 +127,22 @@ const type = defineTool({
     'submit is rejected in verbatim mode (call press_key instead). ' +
     'clear:true empties the field first (focus + Ctrl+A + Delete). ' +
     'focus:"none" skips the implicit click: with ref it only DOM.focuses the element (caret stays put — ' +
-    'avoids Monaco jumping to end-of-line at the click point); without ref it types into whatever is focused.',
+    'avoids Monaco jumping to end-of-line at the click point); without ref it types into whatever is focused. ' +
+    'Best practice for Monaco-style editors: prefer full replacement — click the editor, press_key(key:"a", ' +
+    'modifiers:["ctrl"]), then type — instead of appending after Ctrl+End, where the caret often sits after ' +
+    'template indentation on a blank line and silently stacks indentation. ' +
+    'Returns the caret landing point insertionPoint {line, col} (1-based) and insertedLines for self-checking where the text landed.',
   schema: typeParams.shape,
   async run(args, call) {
-    await callBridge(call, 'type', args, okResult)
+    const result = await callBridge(call, 'type', args, typeResult)
     const bits: string[] = []
-    if (args.mode === 'verbatim') bits.push('verbatim')
+    if (result.mode === 'verbatim') bits.push('verbatim')
     if (args.clear === true) bits.push('cleared first')
     if (args.focus === 'none') bits.push('no click')
+    if (result.insertedLines > 0) bits.push(`${result.insertedLines + 1} lines`)
+    if (result.insertionPoint !== undefined) {
+      bits.push(`cursor at L${result.insertionPoint.line}:C${result.insertionPoint.col}`)
+    }
     const suffix = bits.length > 0 ? ` (${bits.join(', ')})` : ''
     return toolText(
       `Typed into ${args.ref ?? 'focused element'}${suffix}${args.submit ? ' and pressed Enter' : ''}`,

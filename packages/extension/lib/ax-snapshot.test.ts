@@ -259,7 +259,7 @@ describe('renderAxSnapshot', () => {
     expect(renderAxSnapshot(tree)).toEqual(renderAxSnapshot(tree))
   })
 
-  test('query keeps matching nodes and their ancestor chain, drops other branches', () => {
+  test('query renders interactive hits first (subtree kept), drops unrelated branches', () => {
     const tree = [
       node({nodeId: '0', role: 'RootWebArea', name: 'page'}),
       node({nodeId: '1', role: 'region', name: 'comments'}),
@@ -271,11 +271,87 @@ describe('renderAxSnapshot', () => {
     tree[1]!.childIds.push('2')
     tree[3]!.childIds.push('4')
     const result = renderAxSnapshot(tree, {query: /code editor/i})
-    expect(result.text).toContain('Code editor')
-    expect(result.text).toContain('comments') // 祖先链保留
+    // P0-2：命中列表直出，首行即交互命中；祖先链不再占预算
+    expect(result.text.startsWith('- textbox "Code editor" [ref=e1]')).toBe(true)
     expect(result.text).not.toContain('ad') // 无关分支裁掉
     expect(result.text).not.toContain('sidebar')
+    expect(result.text).not.toContain('comments')
     expect(result.refs.map((r) => r.backendDOMNodeId)).toEqual([21])
+  })
+
+  test('query ranks interactive hits before text-only hits regardless of DOM order', () => {
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'page'}),
+      node({nodeId: '1', role: 'paragraph', name: 'please submit feedback in the forum'}),
+      node({nodeId: '2', role: 'button', name: 'Submit', backendDOMNodeId: 31}),
+    ]
+    tree[0]!.childIds.push('1', '2')
+    const result = renderAxSnapshot(tree, {query: /submit/i})
+    const firstLine = result.text.split('\n')[0] ?? ''
+    expect(firstLine).toBe('- button "Submit" [ref=e1]')
+    // 纯文本命中排其后且只保留自身一行
+    expect(result.text).toContain('- paragraph "please submit feedback in the forum"')
+    expect(result.refs.map((r) => r.ref)).toEqual(['e1'])
+  })
+
+  test('query text-only hits render a single line without expanding their subtree', () => {
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'page'}),
+      node({nodeId: '1', role: 'generic', name: 'post: how do I submit a solution'}),
+      node({nodeId: '2', role: 'paragraph', name: 'long comment body'}),
+      node({nodeId: '3', role: 'button', name: 'Submit', backendDOMNodeId: 41}),
+    ]
+    tree[0]!.childIds.push('1', '3')
+    tree[1]!.childIds.push('2')
+    const result = renderAxSnapshot(tree, {query: /submit/i})
+    expect(result.text).toContain('how do I submit a solution')
+    expect(result.text).not.toContain('long comment body')
+  })
+
+  test('query hits nested inside an interactive hit are not duplicated', () => {
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'page'}),
+      node({nodeId: '1', role: 'button', name: 'Submit', backendDOMNodeId: 51}),
+      node({nodeId: '2', role: 'StaticText', name: 'Submit solution', backendDOMNodeId: 52}),
+    ]
+    tree[0]!.childIds.push('1')
+    tree[1]!.childIds.push('2')
+    const result = renderAxSnapshot(tree, {query: /submit/i})
+    expect(result.refs).toHaveLength(1)
+    // 按钮行 + 子树内的 StaticText 行；不会作为独立命中重复列出
+    expect((result.text.match(/Submit/g) ?? []).length).toBe(2)
+  })
+
+  test('named text nodes inside popup containers get weak refs (dropdown options)', () => {
+    // P0-1：LeetCode 语言下拉项只是 dialog 下的 StaticText/div，也必须拿到 ref
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'page'}),
+      node({nodeId: '1', role: 'dialog', name: 'language'}),
+      node({nodeId: '2', role: 'generic', name: 'Python3', backendDOMNodeId: 61}),
+      node({nodeId: '3', role: 'StaticText', name: 'Java', backendDOMNodeId: 62}),
+      node({nodeId: '4', role: 'StaticText', name: 'outside text', backendDOMNodeId: 63}),
+    ]
+    tree[0]!.childIds.push('1', '4')
+    tree[1]!.childIds.push('2')
+    tree[2]!.childIds.push('3')
+    const result = renderAxSnapshot(tree)
+    expect(result.refs.map((r) => r.backendDOMNodeId)).toEqual([61, 62])
+    expect(result.refs.every((r) => r.weak === true)).toBe(true)
+    expect(result.text).toContain('[weak]')
+    expect(result.text).not.toContain('outside text [ref')
+  })
+
+  test('named nodes inside a listbox popup get weak refs', () => {
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'page'}),
+      node({nodeId: '1', role: 'listbox', name: 'lang'}),
+      node({nodeId: '2', role: 'listitem', name: 'Rust', backendDOMNodeId: 71}),
+    ]
+    tree[0]!.childIds.push('1')
+    tree[1]!.childIds.push('2')
+    const result = renderAxSnapshot(tree)
+    expect(result.refs).toHaveLength(1)
+    expect(result.refs[0]).toMatchObject({backendDOMNodeId: 71, weak: true})
   })
 
   test('query with no matches renders empty and reports no truncation', () => {

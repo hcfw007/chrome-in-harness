@@ -290,7 +290,16 @@ export async function elementCenter(
   tabId: number,
   backendNodeId: number,
 ): Promise<{x: number; y: number}> {
-  const result = await send<BoxModelResult>(tabId, 'DOM.getBoxModel', {backendNodeId})
+  let result: BoxModelResult
+  try {
+    result = await send<BoxModelResult>(tabId, 'DOM.getBoxModel', {backendNodeId})
+  } catch (error) {
+    // CDP 对 display:none / 已分离节点直接报错（如 "Node does not have a layout object"），换成可行动的文案
+    throw new Error(
+      `element has no layout (gone, hidden, or display:none) — take a new snapshot (${error instanceof Error ? error.message : String(error)})`,
+      {cause: error},
+    )
+  }
   const quad = result.model?.content
   if (quad === undefined || quad.length < 8) {
     throw new Error('element has no box model (it may live in an out-of-process frame or be display:none)')
@@ -345,6 +354,51 @@ export async function dispatchWheel(
 
 export async function insertText(tabId: number, text: string): Promise<void> {
   await send(tabId, 'Input.insertText', {text})
+}
+
+export interface CursorPosition {
+  readonly line: number
+  readonly col: number
+}
+
+/**
+ * 读当前焦点元素的光标落点（1-based line/col）。
+ * Monaco 优先走 window.monaco API（隐藏 textarea 的 value 只含当前行，按行数算是错的）；
+ * 原生 textarea/input 用 selectionStart 推算。读不到返回 null，调用方自行省略该字段。
+ */
+export async function readCursorPosition(tabId: number): Promise<CursorPosition | null> {
+  const script =
+    '(function () {' +
+    '  var active = document.activeElement;' +
+    '  if (!active) return null;' +
+    '  try {' +
+    '    if (active.closest && active.closest(".monaco-editor")) {' +
+    '      var monaco = window.monaco;' +
+    '      if (monaco && monaco.editor && typeof monaco.editor.getEditors === "function") {' +
+    '        var editor = monaco.editor.getEditors().find(function (e) {' +
+    '          try { return e.getDomNode().contains(active) } catch (err) { return false }' +
+    '        });' +
+    '        if (editor) {' +
+    '          var p = editor.getPosition();' +
+    '          if (p) return {line: p.lineNumber, col: p.column};' +
+    '        }' +
+    '      }' +
+    '      return null;' +
+    '    }' +
+    '  } catch (err) {}' +
+    '  var tag = active.tagName.toLowerCase();' +
+    '  if (tag !== "textarea" && tag !== "input") return null;' +
+    '  var pos = active.selectionStart;' +
+    '  if (typeof pos !== "number") return null;' +
+    '  var upto = String(active.value || "").slice(0, pos);' +
+    '  var nl = upto.lastIndexOf("\\n");' +
+    '  return {line: upto.split("\\n").length, col: pos - nl};' +
+    '})()'
+  const value = await evaluateJson<CursorPosition | null>(tabId, script)
+  if (value === null || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  if (typeof record['line'] !== 'number' || typeof record['col'] !== 'number') return null
+  return {line: record['line'], col: record['col']}
 }
 
 /** 一个键的完整 press：keyDown（组合键无 text，走 rawKeyDown）+ keyUp。 */

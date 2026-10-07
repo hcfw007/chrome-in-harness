@@ -120,22 +120,34 @@ describe('browser defs', () => {
     expect(content).toEqual([{type: 'text', text: 'Condition matched.'}])
   })
 
-  test('type forwards mode/clear/focus and confirms with detail', async () => {
-    const fake = fakeBridge({})
+  test('type forwards mode/clear/focus and confirms with insertion point', async () => {
+    const fake = fakeBridge({
+      mode: 'verbatim',
+      insertedLines: 3,
+      insertionPoint: {line: 4, col: 1},
+    })
     const content = await run(
       byName('type'),
       {ref: 'e7', text: 'code', mode: 'verbatim', clear: true},
       fake.call,
     )
     expect(fake.received[0]).toEqual({tool: 'type', params: {ref: 'e7', text: 'code', mode: 'verbatim', clear: true}})
-    expect(content).toEqual([{type: 'text', text: 'Typed into e7 (verbatim, cleared first)'}])
+    expect(content).toEqual([
+      {type: 'text', text: 'Typed into e7 (verbatim, cleared first, 4 lines, cursor at L4:C1)'},
+    ])
+  })
+
+  test('type renders without insertion point when the caret is unreadable', async () => {
+    const fake = fakeBridge({mode: 'insert', insertedLines: 0})
+    const content = await run(byName('type'), {ref: 'e2', text: 'x'}, fake.call)
+    expect(content).toEqual([{type: 'text', text: 'Typed into e2'}])
   })
 
   test('type without ref targets the focused element (focus:none path)', async () => {
-    const fake = fakeBridge({})
+    const fake = fakeBridge({mode: 'insert', insertedLines: 0, insertionPoint: {line: 1, col: 2}})
     const content = await run(byName('type'), {text: 'x', focus: 'none'}, fake.call)
     expect(fake.received[0]).toEqual({tool: 'type', params: {text: 'x', focus: 'none'}})
-    expect(content).toEqual([{type: 'text', text: 'Typed into focused element (no click)'}])
+    expect(content).toEqual([{type: 'text', text: 'Typed into focused element (no click, cursor at L1:C2)'}])
   })
 
   test('press_key forwards key, modifiers and ref', async () => {

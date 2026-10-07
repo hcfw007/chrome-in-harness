@@ -28,20 +28,26 @@ const WEAK_SCAN_LIMIT = 120
 export function buildWeakScanScript(limit = WEAK_SCAN_LIMIT): string {
   return `(() => {
     const NATIVE = new Set(['a','button','input','select','textarea','label','option','summary','video','audio'])
+    const POPUP = '[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"],dialog[open]'
     const hits = []
     let index = 0
     for (const el of document.querySelectorAll('*')) {
       const tag = el.tagName.toLowerCase()
-      if (!NATIVE.has(tag) && !el.closest('a,button,[role]')) {
+      if (!NATIVE.has(tag)) {
         let weak = false
         try {
           if (el.onclick !== null) weak = true
           else if (getComputedStyle(el).cursor === 'pointer') weak = true
         } catch {}
         if (weak) {
-          const rect = el.getBoundingClientRect()
-          if (rect.width > 0 && rect.height > 0) {
-            hits.push({index, tag, text: (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 80)})
+          // 弹出层内的候选拔宽：允许带 role 祖先（下拉项常包在 dialog/listbox 里）；
+          // 弹出层外维持旧排除规则（a/button/[role] 祖先不算自定义控件）
+          const inPopup = !!el.closest(POPUP)
+          if (inPopup || !el.closest('a,button,[role]')) {
+            const rect = el.getBoundingClientRect()
+            if (rect.width > 0 && rect.height > 0) {
+              hits.push({index, tag, text: (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 80)})
+            }
           }
         }
       }

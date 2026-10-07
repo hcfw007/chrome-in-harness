@@ -11,10 +11,11 @@ import {
   focusNode,
   getViewportMetrics,
   insertText,
+  readCursorPosition,
   scrollIntoViewIfNeeded,
   viewportCenter,
 } from '../lib/cdp-commands'
-import type {ClickOptions} from '../lib/cdp-commands'
+import type {ClickOptions, CursorPosition} from '../lib/cdp-commands'
 import {resolveKey} from '../lib/keymap'
 import type {InputModifier} from '../lib/keymap'
 import {planVerbatim} from '../lib/verbatim'
@@ -42,25 +43,45 @@ async function locate(tabId: number, backendDOMNodeId: number): Promise<{x: numb
   return elementCenter(tabId, backendDOMNodeId)
 }
 
-/** 页面上是否有打开的对话框（ARIA dialog 或原生 <dialog>）。 */
+/**
+ * 页面上是否有「打开且可见」的对话框。
+ * 只查存在性会误判：不少实现（如本地回归页）关闭 dialog 仅切 display:none，节点常驻 DOM，
+ * 导致点击明明已生效仍触发键盘重试（对已隐藏节点 DOM.focus 报 not focusable）。
+ */
 const HAS_OPEN_DIALOG =
-  '(function(){return !!(document.querySelector(\'[role="dialog"]\') || document.querySelector("dialog[open]"))})()'
+  '(function(){var els=document.querySelectorAll(\'[role="dialog"],dialog[open]\');' +
+  'for (var i=0;i<els.length;i++){var r=els[i].getBoundingClientRect();' +
+  'if (r.width>0&&r.height>0) return true}return false})()'
 
 export const click: ToolHandler = async (params) => {
   const {ref, tabId} = params as {ref: string; tabId?: number}
   const target = await prepareInputTab(tabId)
   await withRef(target.tabId, ref, async (entry) => {
     const {x, y} = await locate(target.tabId, entry.backendDOMNodeId)
-    // 对话框守卫：弹窗按钮常因 React 重渲染在测量与点击之间挪位导致点击丢失。
-    // 点击前有对话框、点击后仍在 → 换键盘激活（focus + Enter）重试一次。
+    // 对话框守卫：弹窗项常因 React 重渲染在测量与点击之间挪位导致点击丢失。
+    // 点击前有对话框、静置后仍在 → 重测坐标补一击（文本节点 ref 无法 DOM.focus，
+    // 第二击是唯一通用补刀路径）；补击时元素已消失视为成功（弹层正在关闭）。
     const dialogBefore = await evaluateJson<boolean>(target.tabId, HAS_OPEN_DIALOG)
     await dispatchClick(target.tabId, x, y)
     if (dialogBefore) {
-      const dialogAfter = await evaluateJson<boolean>(target.tabId, HAS_OPEN_DIALOG)
-      if (dialogAfter) {
-        await focusNode(target.tabId, entry.backendDOMNodeId)
-        const enter = resolveKey('Enter')
-        if (enter.ok) await dispatchKey(target.tabId, enter.info, [])
+      const stillOpen = async (): Promise<boolean> => {
+        // 弹层关闭有动画/异步延迟，立即检查会把已生效的点击误判为丢失
+        await new Promise((resolve) => setTimeout(resolve, 150))
+        return evaluateJson<boolean>(target.tabId, HAS_OPEN_DIALOG)
+      }
+      if (await stillOpen()) {
+        try {
+          const point = await locate(target.tabId, entry.backendDOMNodeId)
+          await dispatchClick(target.tabId, point.x, point.y)
+        } catch {
+          // 重测失败 = 元素正在消失，原始点击大概率已生效
+          return
+        }
+        if (await stillOpen()) {
+          throw new Error(
+            'click dispatched twice but the dialog is still open — snapshot to check its state and try a different target',
+          )
+        }
       }
     }
   })
@@ -182,6 +203,26 @@ export const typeText: ToolHandler = async (params) => {
     }
   }
 
+  // 结果带插入点概要：模型可自查落点（Monaco 模板残留缩进叠加的教训）
+  const insertedLines = (raw.text.match(/\n/g) ?? []).length
+  const buildResult = async (): Promise<{
+    mode: 'insert' | 'verbatim'
+    insertedLines: number
+    insertionPoint?: CursorPosition
+  }> => {
+    let point: CursorPosition | null
+    try {
+      point = await readCursorPosition(target.tabId)
+    } catch {
+      point = null
+    }
+    return {
+      mode,
+      insertedLines,
+      ...(point !== null ? {insertionPoint: point} : {}),
+    }
+  }
+
   if (focus === 'none') {
     // 不做隐式点击：光标/选区保持原位（Monaco 行尾追加/插入行中的解法）。
     // 给了 ref 时只做 DOM.focus（不点击），否则直接向当前焦点元素输入。
@@ -193,7 +234,7 @@ export const typeText: ToolHandler = async (params) => {
     }
     if (mode === 'verbatim') await typeVerbatim()
     else await typeInsert()
-    return {}
+    return buildResult()
   }
 
   if (raw.ref === undefined) {
@@ -205,7 +246,7 @@ export const typeText: ToolHandler = async (params) => {
     if (mode === 'verbatim') await typeVerbatim()
     else await typeInsert()
   })
-  return {}
+  return buildResult()
 }
 
 /** 单键 press：可选先 focus ref 元素；支持 ctrl/alt/shift/meta 组合键。 */

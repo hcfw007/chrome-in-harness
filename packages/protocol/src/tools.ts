@@ -45,7 +45,7 @@ export const navigateParams = z.object({
 })
 
 export const snapshotParams = z.object({
-  /** 按 role/name 大小写不敏感正则过滤（保留命中节点的祖先链以维持结构）。 */
+  /** 按 role/name 大小写不敏感正则过滤：交互命中在前（连子树），纯文本命中只留一行。 */
   query: z.string().min(1).max(200).optional(),
   /** 只输出该 ref 指向节点的子树。 */
   rootRef: z.string().regex(REF_PATTERN).optional(),
@@ -101,6 +101,17 @@ export const typeParams = z.object({
   clear: z.boolean().optional(),
   focus: z.enum(['none', 'click-ref']).optional(),
   ...tabIdField,
+})
+
+export const typeResult = z.object({
+  /** 实际使用的输入模式。 */
+  mode: z.enum(['insert', 'verbatim']),
+  /** 插入文本里的换行数（0 = 单行插入）。 */
+  insertedLines: z.number().int().min(0),
+  /** 输入后的光标落点（1-based line/col）；焦点不在可编辑元素或缺 Monaco API 时缺省。 */
+  insertionPoint: z
+    .object({line: z.number().int().min(1), col: z.number().int().min(1)})
+    .optional(),
 })
 
 export const getTextParams = z.object({
