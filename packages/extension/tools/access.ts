@@ -6,6 +6,7 @@
  */
 import {TOOL_ERROR_CODES} from '@chrome-in-harness/protocol'
 import type {ToolErrorCode} from '@chrome-in-harness/protocol'
+import {requestDomainConfirmation} from '../lib/domain-confirmation'
 import {isUrlAllowed} from '../lib/site-filter'
 import {findManagedTab, isTabManaged} from '../lib/tab-group'
 import {getAllowlist} from '../lib/whitelist'
@@ -51,14 +52,36 @@ function describeHost(url: string): string {
   }
 }
 
-async function assertUrlAllowed(url: string): Promise<void> {
+/** 取 URL 的 hostname（小写）；无 usable host（about:blank、chrome://…）返回 undefined。 */
+function hostOf(url: string): string | undefined {
+  try {
+    const host = new URL(url).hostname.toLowerCase()
+    return host.length > 0 ? host : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * 域边界校验：不在名单内时弹出确认窗口并抛 DOMAIN_CONFIRMATION_REQUIRED（非阻塞）。
+ * 用户确认后重试同一工具即可通过；URL 无 usable host（about:blank、chrome://…）
+ * 属于无法确认的情况，仍走 DOMAIN_NOT_ALLOWED。
+ */
+export async function assertUrlAllowed(url: string): Promise<void> {
   const rules = await getAllowlist()
-  if (!isUrlAllowed(url, rules)) {
+  if (isUrlAllowed(url, rules)) return
+  const host = hostOf(url)
+  if (host === undefined) {
     throw toolError(
       TOOL_ERROR_CODES.DOMAIN_NOT_ALLOWED,
-      `${describeHost(url)} is not in the allowlist. Add the domain on the extension options page and retry.`,
+      `${describeHost(url)} is not in the allowlist and has no usable host; add the domain on the extension options page.`,
     )
   }
+  await requestDomainConfirmation(host, url)
+  throw toolError(
+    TOOL_ERROR_CODES.DOMAIN_CONFIRMATION_REQUIRED,
+    `${host} is not in the allowlist. A confirmation window has been opened — ask the user to allow it, then retry.`,
+  )
 }
 
 /** 解析并校验当前 tab（组内 + 域名单）。不通过绝不触碰 chrome.debugger。 */

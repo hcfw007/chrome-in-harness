@@ -40,7 +40,7 @@ Chrome 扩展 (MV3, WXT)  --WebSocket client-->  本地 server (Node, ws on 127.
 
 - **read_console / read_network**：CDP 采集的 console 与网络请求元数据（响应体不采集）。缓冲从 tab 首次被工具 attach 起积累
 - **wait**：等待文本 / CSS 选择器 / URL 子串出现（页面内 Promise 轮询，默认 8s 上限 30s），超时返回 `{matched:false}` 而非报错
-- **add_allowlist_domain**：运行时扩白名单。仅在用户明确要求时调用——对话即授权界面
+- **add_allowlist_domain**：显式扩白名单（无确认窗口，直接生效）。一般无需手动调用——访问新域名会自动弹确认窗口
 - **evaluate_script**：受限 `Runtime.evaluate` 执行页面上下文 JS。黑名单拒绝网络访问（fetch/XHR/WebSocket/sendBeacon）、eval/Function、导航（location/window.open）、document.write、debugger 与 `chrome.*`；`awaitPromise:true` 需 async IIFE；结果 JSON 序列化超限截断
 - **request_permission**：针对域名发起 `chrome.permissions.request` 原生授权弹窗，授予后同步写入 storage 白名单。仅当用户明确要求时调用
 - **takeover_tab**：把已打开的用户 tab 收编进受管组（`tab_list` 标 `[managed:<groupId>]` 便于识别）；仅在用户明确要求在该 tab 工作时调用，URL 必须已在白名单
@@ -52,7 +52,7 @@ Chrome 扩展 (MV3, WXT)  --WebSocket client-->  本地 server (Node, ws on 127.
 - **get_text**：优先读 AX value（虚拟滚动编辑器全文唯一可靠读数），innerText 兜底，上限 8KB
 - **type**：`mode="insert"`（默认）或 `mode="verbatim"`（Monaco 类编辑器逐行 insertText 还原缩进，无 trim）；返回插入点概要供模型自查
 - **真实输入**：点击/输入走 CDP `Input.*`（isTrusted=true），与真人操作无法区分
-- **域名白名单**：`chrome.storage.local` 持久化，扩展侧在 attach 前校验，空名单 = 拒绝全部；规则 `example.com` 匹配自身与任意深度子域；首次安装自动打开 options 页
+- **域名白名单 + 运行时确认**：`chrome.storage.local` 持久化，扩展侧在 attach 前校验，空名单 = 拒绝全部；规则 `example.com` 匹配自身与任意深度子域。访问未授权域名时**自动弹出确认窗口**（显示域名与来源 URL，允许/拒绝），工具即时返回 `DOMAIN_CONFIRMATION_REQUIRED`（非阻塞），用户点「允许」后重试即通过——无需手动改配置
 - **受管组复用**：`tab_new` / `takeover_tab` 优先并入本窗口既有的 "Chrome in Harness" 组（组标题带 `⏳/✅/❌` 操作状态前缀时也识别为同一组），避免每开一个 tab 就新建组
 - **代价（已接受）**：attach 期间 Chrome 显示「正在调试」黄条；目标 tab 打开 DevTools 会顶掉扩展会话，工具报 `DEBUGGER_BUSY`，关闭 DevTools 后自动恢复
 - **后台操作（自动处理，不抢前台）**：CDP `Input.*` 在后台 tab 上会被静默丢弃；输入类工具派发前开 `Emulation.setFocusEmulationEnabled` 焦点仿真（Playwright / Claude-in-Chrome 同款），让后台 tab 直接接收输入，**不激活 tab、不打断用户当前视图**；仿真不可用时回退激活 tab；窗口最小化时自动恢复并聚焦，恢复失败报 `WINDOW_NOT_INTERACTIVE`

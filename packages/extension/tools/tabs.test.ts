@@ -17,6 +17,12 @@ vi.mock('../lib/whitelist', () => ({
   getAllowlist: () => getAllowlist(),
 }))
 
+// 未授权域名会触发确认窗口（依赖 chrome.storage/windows），测试里桩掉
+const requestDomainConfirmation = vi.fn<(host: string, url: string) => Promise<void>>()
+vi.mock('../lib/domain-confirmation', () => ({
+  requestDomainConfirmation: (host: string, url: string) => requestDomainConfirmation(host, url),
+}))
+
 const {tabSelect, tabClose, tabNew} = await import('./tabs.js')
 
 /** 最小 chrome.tabs / tabGroups 桩。 */
@@ -56,6 +62,8 @@ beforeEach(() => {
   findReusableManagedGroup.mockReset()
   findReusableManagedGroup.mockResolvedValue(undefined)
   getAllowlist.mockReset()
+  requestDomainConfirmation.mockReset()
+  requestDomainConfirmation.mockResolvedValue(undefined)
 })
 
 afterEach(() => {
@@ -99,13 +107,14 @@ describe('tab_select / tab_close 组边界', () => {
 })
 
 describe('tab_new 组边界与白名单', () => {
-  test('new rejects URLs outside the allowlist before creating a tab', async () => {
+  test('new triggers domain confirmation for unlisted URLs,不用建 tab', async () => {
     getAllowlist.mockResolvedValue(['feishu.cn'])
     const create = vi.fn(async () => ({id: 1, windowId: 1}))
     installChrome({create})
     await expect(tabNew({url: 'https://evil.example/'} as never)).rejects.toThrow(
-      'DOMAIN_NOT_ALLOWED',
+      'DOMAIN_CONFIRMATION_REQUIRED',
     )
+    expect(requestDomainConfirmation).toHaveBeenCalledWith('evil.example', 'https://evil.example/')
     expect(create).not.toHaveBeenCalled()
   })
 

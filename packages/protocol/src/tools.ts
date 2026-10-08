@@ -17,6 +17,7 @@ export const TAB_ID = z.number().int().positive()
 /** extension 侧拼进错误消息前缀（"CODE: message"），server 原样透传供模型自纠。 */
 export const TOOL_ERROR_CODES = {
   DOMAIN_NOT_ALLOWED: 'DOMAIN_NOT_ALLOWED',
+  DOMAIN_CONFIRMATION_REQUIRED: 'DOMAIN_CONFIRMATION_REQUIRED',
   TAB_NOT_MANAGED: 'TAB_NOT_MANAGED',
   STALE_REF: 'STALE_REF',
   NO_SNAPSHOT: 'NO_SNAPSHOT',

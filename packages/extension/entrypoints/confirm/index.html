@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Chrome in Harness — 域名授权</title>
+    <style>
+      body { font: 14px/1.6 system-ui, sans-serif; margin: 0; padding: 1.25rem; color: #1a1a1a; }
+      h1 { font-size: 1rem; margin: 0 0 .75rem; }
+      .host { font: 600 1.3rem/1.4 ui-monospace, monospace; word-break: break-all; margin: .25rem 0 .5rem; }
+      .from { color: #555; font-size: 12px; word-break: break-all; margin-bottom: 1rem; }
+      .actions { display: flex; gap: .75rem; justify-content: flex-end; }
+      button { padding: .45rem 1.2rem; cursor: pointer; border-radius: 6px; border: 1px solid #ccc; }
+      #allow { background: #1a7f37; color: #fff; border-color: #1a7f37; }
+      #deny { background: #fff; }
+      #empty { color: #888; }
+    </style>
+  </head>
+  <body>
+    <div id="empty" hidden>没有待确认的域名。</div>
+    <div id="panel" hidden>
+      <h1>允许操作该域名？</h1>
+      <div class="host" id="host"></div>
+      <div class="from" id="from"></div>
+      <div class="actions">
+        <button id="deny">拒绝</button>
+        <button id="allow">允许</button>
+      </div>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
