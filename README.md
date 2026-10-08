@@ -48,7 +48,7 @@ Chrome 扩展 (MV3, WXT)  --WebSocket client-->  本地 server (Node, ws on 127.
 - **snapshot**：`chrome.debugger` + CDP `Accessibility.getFullAXTree`，渲染成 Playwright ariaSnapshot 风格的缩进文本，交互元素带 `[ref=eN-<token>]`；click/hover/type/scroll 只接受 ref，杜绝选择器漂移
 - **ref 生命周期**：ref 绑定 tab 的最近一次快照，格式 `e<N>-<token>`（token 编码 worker 代 + 快照版本）；导航/关 tab/debugger 分离即失效；跨 worker 代或过期一律显式 `STALE_REF`（拒绝静默错点）；同代快照更替时交互工具按元素身份自动重试一次；SW 被杀后报 `NO_SNAPSHOT` 引导重新 snapshot
 - **click_at**：ref 命中不了时（iframe/Canvas/icon-only 容器）的坐标点击兜底，视口 CSS 像素，越界显式报错
-- **press_key**：单键/组合键（`ctrl`/`alt`/`shift`/`meta` + 键名，支持 F1-F24），可选先 focus 指定 ref；派发前有键路探针——窗口 resize/失焦后 CDP 按键可能静默丢失（IME 插入仍活），探针先验证送达，死了自动重开焦点仿真/激活自愈，仍死显式报 `KEY_PIPELINE_DEAD`
+- **press_key**：单键/组合键（`ctrl`/`alt`/`shift`/`meta` + 键名，支持 F1-F24），可选先 focus 指定 ref；派发前有默认动作探针——临时离屏输入框验证按键真的产生字符插入（监听器探针检测不出「事件送达但默认动作被丢弃」的假活，resize/失焦后的典型死法），死了自动重开焦点仿真/激活自愈，仍死显式报 `KEY_PIPELINE_DEAD`
 - **get_text**：优先读 AX value（虚拟滚动编辑器全文唯一可靠读数），innerText 兜底，上限 8KB
 - **type**：`mode="insert"`（默认）/ `mode="verbatim"`（Monaco 类编辑器逐行 insertText 还原缩进，无 trim）/ `mode="set"`（monaco `setValue` 原子写整个缓冲——绕开键盘/焦点/IME 通路，窗口失焦、键路死亡、编辑器塌缩都不影响；ref 可省，单编辑器页面自动选中）；焦点不在可编辑元素时显式报 `INPUT_NOT_LANDED` 而非静默假成功；返回插入点概要 `{line, col}` 供模型自查
 - **wait editorRendered**：Monaco 渲染完成 = 高度 > 40px 且宽度 > 200px 且有非空 view-line——resize 后塌缩成 5×5 窄条的假就绪不再放过；检测到塌缩自动按父容器尺寸强制 `layout()` 重排救回（无参 layout 会按自身窄宽度自我维持，必须显式传维度）
@@ -63,6 +63,7 @@ Chrome 扩展 (MV3, WXT)  --WebSocket client-->  本地 server (Node, ws on 127.
 - **写解法**：`type mode="set"` 一步全量写盘，比 click → Ctrl+A → type 更稳更快；写入前自动检测并恢复塌缩布局（返回 `layoutRecovered:true` 可观测），无需再手动 rect 预检 + layout()；提交用 Run/Submit 按钮 ref 点击
 - **水合竞态**：React 站点刚加载完时点击会被静默吞掉（handler 尚未接线）——`navigate` 后先 `wait`（app 级 marker）再首次点击
 - **verdict 真值**：LeetCode 2026 UI 提交后自动跳转 `/submissions/detail/<id>/`，结果面板经常不渲染（非 AC 尤甚）；唯一可靠 oracle 是直接 `navigate` 到 `/submissions/detail/<id>/v2/check/` 读 JSON（同源即在白名单内）
+- **707/被拒诊断三步**（实测可复制）：`read_network(urlFilter:"submit")` 从提交响应里提取 submission id → `navigate` 到 `/submissions/detail/<id>/v2/check/` → 读 `ai_judge_message` 字段定位根因（含 707 后重提场景）
 - **AC 判定**：`wait(text:"Accepted")` 有假阳性（题目统计区常驻 "Accepted 2.3M/4M" 字样）；`wait(text:"Beats")` 才是 AC-only 信号，Run 结果用 `wait(text:"Runtime")`
 
 ## 安装与使用

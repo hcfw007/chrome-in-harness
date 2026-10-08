@@ -452,30 +452,54 @@ export async function readInputFocus(tabId: number): Promise<FocusState> {
 }
 
 /**
- * 键盘通路探针：注入 F13 keydown 监听后派发一次 F13，验证 CDP 按键事件真的到达页面。
- * 背景：窗口 resize/失焦后 keyDown 通路可能整体静默失效（insertText 走 IME 仍活），
- * 按键工具必须先探测，死了就显式报错而不是无声吞掉。
- * 局限：焦点在 iframe 内时事件派发到子 frame，主 frame 监听收不到——调用方需结合
- * 焦点状态排除该情形。探针自身异常按「通路存活」处理（宁可放过不可误伤）。
+ * 键盘通路探针 v2：验证按键的**默认动作**真的生效（字符插入），而非监听器收到事件。
+ * 背景：resize/失焦后可能「事件送达（监听器触发）但默认动作被丢弃」——F13 监听探针
+ * 会假阳性放行（战报：Ctrl+End 后光标纹丝不动，探针却报活）。
+ * 做法：临时离屏 input 聚焦 → CDP 派发 'b' → 回读 input.value。焦点窃取有风险，
+ * 严格防护：临时 input 必须真的拿到焦点才派发（否则中止、按存活处理），
+ * 读取时还原原焦点并移除临时节点。探针自身异常一律按存活（宁可放过不可误伤）。
  */
-const KEY_PROBE_INSTALL =
+const KEY_PROBE_BEGIN =
   '(function(){' +
-  'if(!window.__cicKeyProbeInstalled){' +
-  'window.__cicKeyProbeInstalled=true;' +
-  'window.addEventListener("keydown",function(e){if(e.key==="F13"){window.__cicKeyProbeHit=true}},true)' +
-  '}' +
-  'window.__cicKeyProbeHit=false;' +
+  'try{' +
+  'var prev=document.activeElement;' +
+  'var inp=document.createElement("input");' +
+  'inp.setAttribute("aria-hidden","true");' +
+  'inp.style.cssText="position:fixed;left:-9999px;top:0;width:8px;height:8px;opacity:0;border:0;padding:0";' +
+  '(document.body||document.documentElement).appendChild(inp);' +
+  'inp.focus();' +
+  'if(document.activeElement!==inp){try{inp.remove()}catch(e){}return false}' +
+  'window.__cicKeyProbe={input:inp,prev:prev};' +
   'return true' +
+  '}catch(e){return false}' +
   '})()'
-const KEY_PROBE_READ = '(window.__cicKeyProbeHit===true)'
+const KEY_PROBE_READ =
+  '(function(){' +
+  'var st=window.__cicKeyProbe;' +
+  'if(!st)return null;' +
+  'try{delete window.__cicKeyProbe}catch(e){window.__cicKeyProbe=undefined}' +
+  'var ok=false;' +
+  'try{ok=st.input.value==="b"}catch(e){}' +
+  'try{st.input.remove()}catch(e){}' +
+  'try{if(st.prev&&typeof st.prev.focus==="function")st.prev.focus()}catch(e){}' +
+  'return ok' +
+  '})()'
 
 export async function probeKeyPipeline(tabId: number): Promise<boolean> {
-  const probe = resolveKey('F13')
-  if (!probe.ok) return true
+  const key = resolveKey('b')
+  if (!key.ok) return true
   try {
-    await evaluateJson(tabId, KEY_PROBE_INSTALL)
-    await dispatchKey(tabId, probe.info, [])
-    return (await evaluateJson<unknown>(tabId, KEY_PROBE_READ)) === true
+    if ((await evaluateJson<boolean>(tabId, KEY_PROBE_BEGIN)) !== true) return true
+    try {
+      await dispatchKey(tabId, key.info, [])
+    } catch {
+      // 派发异常：尽力清理（READ 自带移除临时节点 + 焦点还原），按存活处理
+      await evaluateJson(tabId, KEY_PROBE_READ).catch(() => undefined)
+      return true
+    }
+    const result = await evaluateJson<unknown>(tabId, KEY_PROBE_READ)
+    if (result !== true && result !== false) return true
+    return result
   } catch {
     return true
   }
@@ -485,7 +509,6 @@ export async function probeKeyPipeline(tabId: number): Promise<boolean> {
  * 键路保障：探针探测 → 死了先自愈 → 仍死则显式报错（resize/失焦后按键静默丢失的战报教训）。
  * 自愈两级：① 强制重开焦点仿真（清缓存重发，仿真状态可能被浏览器侧静默丢弃）；
  * ② activateTab 真激活兜底（内含最小化窗口恢复）。
- * 焦点在 iframe 内时探针天然收不到主 frame 事件，跳过死亡判定（无法验证，不误伤）。
  */
 export async function ensureKeyPipelineAlive(tabId: number): Promise<void> {
   if (await probeKeyPipeline(tabId)) return
@@ -494,13 +517,9 @@ export async function ensureKeyPipelineAlive(tabId: number): Promise<void> {
   if (await probeKeyPipeline(tabId)) return
   await activateTab(tabId)
   if (await probeKeyPipeline(tabId)) return
-  const focus = await readInputFocus(tabId).catch(
-    (): FocusState => ({tag: 'unknown', editable: false, monaco: false, insertionPoint: null}),
-  )
-  if (focus.tag === 'iframe') return
   throw new Error(
-    'KEY_PIPELINE_DEAD: key events are not reaching the page (typically after a window resize or focus loss; ' +
-      'IME text insertion may still work, but key presses are silently dropped). ' +
+    'KEY_PIPELINE_DEAD: key presses are dispatched but not taking effect on the page (event delivery or ' +
+      'default actions dropped — typically after a window resize or focus loss; IME insertion may still work). ' +
       'The window was re-focused without effect — avoid the keyboard path: use type(mode="set") for Monaco buffers ' +
       'or click-based activation, or restore the browser window manually.',
   )

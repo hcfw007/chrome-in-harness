@@ -9,7 +9,7 @@ vi.mock('./cdp', () => ({
 }))
 
 const {send} = await import('./cdp.js')
-const {activateTab, ensureFocusEmulation, forgetDomains} = await import('./cdp-commands.js')
+const {activateTab, ensureFocusEmulation, forgetDomains, probeKeyPipeline} = await import('./cdp-commands.js')
 const sendMock = vi.mocked(send)
 
 /** 最小 chrome.tabs / chrome.windows 桩，记录调用并支持注入行为。 */
@@ -116,5 +116,59 @@ describe('ensureFocusEmulation', () => {
     await ensureFocusEmulation(1)
     expect(windowsUpdate).toHaveBeenCalledWith(10, {state: 'normal', focused: true})
     expect(tabsUpdate).not.toHaveBeenCalled()
+  })
+})
+
+describe('probeKeyPipeline（默认动作探针）', () => {
+  beforeEach(() => {
+    sendMock.mockReset()
+  })
+
+  /** 按脚本内容路由 Runtime.evaluate：BEGIN（createElement）→ 注入值；READ（input.value）→ 注入结果。 */
+  function mockProbe(alive: boolean, beginOk = true): {dispatchCount: () => number} {
+    let dispatchCount = 0
+    sendMock.mockImplementation(async (_tabId: number, method: string, params: {expression?: string}) => {
+      if (method === 'Runtime.evaluate') {
+        const expr = params?.expression ?? ''
+        if (expr.includes('createElement')) return {result: {value: beginOk}}
+        return {result: {value: alive}}
+      }
+      if (method === 'Input.dispatchKeyEvent') {
+        dispatchCount += 1
+        return {}
+      }
+      return {}
+    })
+    return {dispatchCount: () => dispatchCount}
+  }
+
+  test('默认动作生效（b 落入临时 input）：判定存活', async () => {
+    const probe = mockProbe(true)
+    await expect(probeKeyPipeline(1)).resolves.toBe(true)
+    // keyDown + keyUp 一次派发
+    expect(probe.dispatchCount()).toBe(2)
+  })
+
+  test('事件送达但默认动作被丢弃（监听探针的假阳性场景）：判定死亡', async () => {
+    mockProbe(false)
+    await expect(probeKeyPipeline(1)).resolves.toBe(false)
+  })
+
+  test('焦点窃取失败（页面抢回焦点）：中止探测且不派发按键，按存活处理', async () => {
+    const probe = mockProbe(true, false)
+    await expect(probeKeyPipeline(1)).resolves.toBe(true)
+    expect(probe.dispatchCount()).toBe(0)
+  })
+
+  test('读取脚本异常（无法确认）：按存活处理', async () => {
+    sendMock.mockImplementation(async (_tabId: number, method: string, params: {expression?: string}) => {
+      if (method === 'Runtime.evaluate') {
+        const expr = params?.expression ?? ''
+        if (expr.includes('createElement')) return {result: {value: true}}
+        return {result: {value: null}}
+      }
+      return {}
+    })
+    await expect(probeKeyPipeline(1)).resolves.toBe(true)
   })
 })
