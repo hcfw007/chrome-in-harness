@@ -1,5 +1,5 @@
-/** activateTab 单测：tab 激活 + 最小化窗口自动恢复（mock chrome.*，实测发现的边界）。 */
-import {describe, expect, test, vi} from 'vitest'
+/** activateTab / ensureFocusEmulation 单测（mock chrome.*，实测发现的边界）。 */
+import {beforeEach, describe, expect, test, vi} from 'vitest'
 
 // cdp-commands 顶层依赖 ./cdp，桩掉以免牵连真实 chrome.debugger
 vi.mock('./cdp', () => ({
@@ -8,7 +8,9 @@ vi.mock('./cdp', () => ({
   waitForEvent: vi.fn(),
 }))
 
-const {activateTab} = await import('./cdp-commands.js')
+const {send} = await import('./cdp.js')
+const {activateTab, ensureFocusEmulation, forgetDomains} = await import('./cdp-commands.js')
+const sendMock = vi.mocked(send)
 
 /** 最小 chrome.tabs / chrome.windows 桩，记录调用并支持注入行为。 */
 function installChrome(overrides: {
@@ -72,5 +74,47 @@ describe('activateTab', () => {
   test('tabs.get 意外失败：仅告警不阻塞', async () => {
     installChrome({tabsGetThrows: true})
     await expect(activateTab(1)).resolves.toBeUndefined()
+  })
+})
+
+describe('ensureFocusEmulation', () => {
+  beforeEach(() => {
+    sendMock.mockReset()
+    forgetDomains(1)
+    forgetDomains(2)
+  })
+
+  test('正常路径：开焦点仿真，且不激活 tab（不抢前台）', async () => {
+    sendMock.mockResolvedValue({} as never)
+    const {tabsUpdate} = installChrome({tab: {active: false}, windowState: 'normal'})
+    await ensureFocusEmulation(1)
+    expect(sendMock).toHaveBeenCalledWith(1, 'Emulation.setFocusEmulationEnabled', {enabled: true})
+    expect(tabsUpdate).not.toHaveBeenCalled()
+  })
+
+  test('幂等：同 tab 二次调用不再发送（除非 forgetDomains）', async () => {
+    sendMock.mockResolvedValue({} as never)
+    installChrome({tab: {active: true}, windowState: 'normal'})
+    await ensureFocusEmulation(1)
+    await ensureFocusEmulation(1)
+    expect(sendMock).toHaveBeenCalledTimes(1)
+    forgetDomains(1)
+    await ensureFocusEmulation(1)
+    expect(sendMock).toHaveBeenCalledTimes(2)
+  })
+
+  test('仿真不被支持：回退到 activateTab（激活 tab）', async () => {
+    sendMock.mockRejectedValue(new Error('method not found') as never)
+    const {tabsUpdate} = installChrome({tab: {active: false}, windowState: 'normal'})
+    await ensureFocusEmulation(1)
+    expect(tabsUpdate).toHaveBeenCalledWith(1, {active: true})
+  })
+
+  test('最小化窗口：先恢复窗口（不改变 tab 前后台关系）', async () => {
+    sendMock.mockResolvedValue({} as never)
+    const {tabsUpdate, windowsUpdate} = installChrome({tab: {active: false}, windowState: 'minimized'})
+    await ensureFocusEmulation(1)
+    expect(windowsUpdate).toHaveBeenCalledWith(10, {state: 'normal', focused: true})
+    expect(tabsUpdate).not.toHaveBeenCalled()
   })
 })

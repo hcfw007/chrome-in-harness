@@ -1,6 +1,6 @@
 /** wait 工具：注入页面内 Promise 等条件（text / selector / urlContains / editorRendered 四选一）。 */
 import {ensureAttached} from '../lib/cdp'
-import {activateTab, evaluateJson} from '../lib/cdp-commands'
+import {ensureFocusEmulation, evaluateJson} from '../lib/cdp-commands'
 import {authorizeTab} from './access'
 
 import type {ToolHandler} from './types'
@@ -56,8 +56,8 @@ function buildWaitScript(params: WaitParams, timeoutMs: number): string {
 export const wait: ToolHandler = async (rawParams) => {
   const params = rawParams as WaitParams
   const target = await authorizeTab(params.tabId)
-  await activateTab(target.tabId)
   await ensureAttached(target.tabId)
+  await ensureFocusEmulation(target.tabId)
   const timeoutMs = params.timeoutMs ?? 8000
   const result = await evaluateJson<{matched: boolean; timedOut: boolean}>(
     target.tabId,

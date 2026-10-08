@@ -61,9 +61,13 @@ function serializeArgs(args: unknown): string {
 /** 每个会话注册一次 console / network 采集订阅（幂等）。 */
 const collectors = new Map<number, true>()
 
+/** 已开启焦点仿真的 tab（会话级；detach 后需重开）。 */
+const focusEmulated = new Set<number>()
+
 /** 清 enable 缓存（detach 后重 attach 需重新 enable）。 */
 export function forgetDomains(tabId: number): void {
   enabledDomains.delete(tabId)
+  focusEmulated.delete(tabId)
 }
 
 function attachSubscribers(tabId: number): void {
@@ -237,12 +241,35 @@ export async function getTabTitle(tabId: number): Promise<string | undefined> {
 }
 
 /**
+ * 开启焦点仿真：让后台 tab 自认为处于聚焦态，从而接收 CDP `Input.*`。
+ * 这是 Playwright / Claude-in-Chrome 的做法（Emulation.setFocusEmulationEnabled，
+ * 见 playwright crPage.ts 的 attach 流程），避免为了输入而把 tab 抢到前台打断用户。
+ * 若仿真命令不被支持（极老内核），回退到激活 tab。
+ */
+export async function ensureFocusEmulation(tabId: number): Promise<void> {
+  // 最小化窗口上连仿真也收不到输入，需先恢复窗口（不改变 tab 的前后台关系）
+  const tab = await chrome.tabs.get(tabId).catch(() => undefined)
+  if (tab?.windowId !== undefined) await restoreWindowIfNeeded(tab.windowId)
+  if (focusEmulated.has(tabId)) return
+  try {
+    await send(tabId, 'Emulation.setFocusEmulationEnabled', {enabled: true})
+    focusEmulated.add(tabId)
+  } catch (error) {
+    console.warn(
+      '[cdp] focus emulation unavailable, falling back to activateTab:',
+      error instanceof Error ? error.message : error,
+    )
+    await activateTab(tabId)
+  }
+}
+
+/**
  * 让目标 tab 可交互：tab 激活到前台 + 所在窗口若最小化则恢复。
+ * 仅作焦点仿真的回退路径；正常输入类工具走 ensureFocusEmulation，不再抢前台。
  * CDP `Input.*` 在两种情况下被静默丢弃（命令成功返回但页面收不到事件，
  * 表现为「点了没反应」）：
  * ① tab 在后台（visibility:hidden 不处理输入）；
  * ② 所在窗口最小化（实测 Chrome 154，前台 tab 也一样丢）。
- * 所有输入类工具在派发前调用此函数。
  */
 export async function activateTab(tabId: number): Promise<void> {
   try {

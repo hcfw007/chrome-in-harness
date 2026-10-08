@@ -1,12 +1,12 @@
 /** ref 交互工具：click / hover / type / press_key / scroll。ref 三态解析 + CDP 真实输入。 */
 import {ensureAttached} from '../lib/cdp'
 import {
-  activateTab,
   dispatchClick,
   dispatchHover,
   dispatchKey,
   dispatchWheel,
   elementCenter,
+  ensureFocusEmulation,
   evaluateJson,
   focusNode,
   getViewportMetrics,
@@ -25,15 +25,16 @@ import {withRef} from './ref-recovery'
 import type {ToolHandler} from './types'
 
 /**
- * 输入类工具的公共前置：解析 tab → 激活为可见 → attach。
- * 后台 tab 上 CDP `Input.*` 会被静默丢弃，必须先把 tab 激活到前台。
+ * 输入类工具的公共前置：解析 tab → 开启焦点仿真 → attach。
+ * 后台 tab 上 CDP `Input.*` 会被静默丢弃；焦点仿真让 tab 自认为聚焦即可接收输入，
+ * 无需把 tab 抢到前台（Playwright / Claude-in-Chrome 同款做法），不打断用户。
  * 视口度量不在此处缓存：ref 类工具每次经 elementCenter 现采坐标；
  * click_at 的绝对坐标在工具内现采度量做越界校验（见下）。
  */
 async function prepareInputTab(tabId?: number): Promise<{tabId: number; url: string}> {
   const target = await authorizeTab(tabId)
-  await activateTab(target.tabId)
   await ensureAttached(target.tabId)
+  await ensureFocusEmulation(target.tabId)
   return target
 }
 
