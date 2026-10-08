@@ -26,6 +26,10 @@ export const TOOL_ERROR_CODES = {
   SCRIPT_ERROR: 'SCRIPT_ERROR',
   PERMISSION_DENIED: 'PERMISSION_DENIED',
   WINDOW_NOT_INTERACTIVE: 'WINDOW_NOT_INTERACTIVE',
+  /** 窗口 resize/失焦后 CDP 按键事件不再送达页面（IME insertText 仍活），按键会静默丢失。 */
+  KEY_PIPELINE_DEAD: 'KEY_PIPELINE_DEAD',
+  /** 焦点不在可编辑元素上，输入的文本不会落盘（type 显式报错而非静默成功）。 */
+  INPUT_NOT_LANDED: 'INPUT_NOT_LANDED',
 } as const
 
 export type ToolErrorCode = (typeof TOOL_ERROR_CODES)[keyof typeof TOOL_ERROR_CODES]
@@ -92,13 +96,15 @@ export const pressKeyParams = z.object({
 /**
  * type：默认行为与旧版完全一致（点击 ref 元素中心 → Input.insertText → submit 时按 Enter）。
  * mode='verbatim' 一次性整段插入且拒绝 submit（避免 Monaco 自动缩进/括号自动补全）；
+ * mode='set' 走 monaco setValue 原子写整个缓冲（绕开键盘/焦点/IME 通路，窗口失焦也稳），
+ * 此时 ref 可省（页面仅一个编辑器时自动选中）；
  * clear=true 输入前先 Ctrl+A + Delete 清空；focus='none' 跳过隐式点击。
  */
 export const typeParams = z.object({
   ref: z.string().regex(REF_PATTERN).optional(),
   text: z.string().min(1).max(10_000),
   submit: z.boolean().optional(),
-  mode: z.enum(['insert', 'verbatim']).optional(),
+  mode: z.enum(['insert', 'verbatim', 'set']).optional(),
   clear: z.boolean().optional(),
   focus: z.enum(['none', 'click-ref']).optional(),
   ...tabIdField,
@@ -106,7 +112,7 @@ export const typeParams = z.object({
 
 export const typeResult = z.object({
   /** 实际使用的输入模式。 */
-  mode: z.enum(['insert', 'verbatim']),
+  mode: z.enum(['insert', 'verbatim', 'set']),
   /** 插入文本里的换行数（0 = 单行插入）。 */
   insertedLines: z.number().int().min(0),
   /** 输入后的光标落点（1-based line/col）；焦点不在可编辑元素或缺 Monaco API 时缺省。 */

@@ -143,6 +143,15 @@ describe('browser defs', () => {
     expect(content).toEqual([{type: 'text', text: 'Typed into e2'}])
   })
 
+  test('type set mode reports the monaco setValue path', async () => {
+    const fake = fakeBridge({mode: 'set', insertedLines: 7, insertionPoint: {line: 8, col: 1}})
+    const content = await run(byName('type'), {text: 'code'}, fake.call)
+    expect(fake.received[0]).toEqual({tool: 'type', params: {text: 'code'}})
+    expect(content).toEqual([
+      {type: 'text', text: 'Typed into focused element (set via monaco setValue, 8 lines, cursor at L8:C1)'},
+    ])
+  })
+
   test('type without ref targets the focused element (focus:none path)', async () => {
     const fake = fakeBridge({mode: 'insert', insertedLines: 0, insertionPoint: {line: 1, col: 2}})
     const content = await run(byName('type'), {text: 'x', focus: 'none'}, fake.call)

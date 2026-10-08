@@ -15,20 +15,31 @@ interface WaitParams {
 }
 
 /**
- * Monaco 类编辑器渲染完成：容器高度 > 40px（防 SPA 软导航后塌缩成 5×5px 的隐藏实例）
- * 且其内存在非空 view-line（虚拟滚动下可见行有内容即算渲染完成）。
+ * Monaco 类编辑器渲染完成：容器高度 > 40px 且宽度 > 200px（resize 后编辑器会塌缩成
+ * 5×5 的窄条——高度达标但宽度不再，旧检查放过这种假就绪）且其内存在非空 view-line。
+ * 检测到「高度够但宽度塌缩」时自动按父容器尺寸强制 layout() 重排救回
+ * （无参 layout() 按自身 offsetWidth 测量，塌缩态会自我维持，必须显式传维度），
+ * 下一轮轮询按恢复后的尺寸复查。
  */
 const EDITOR_RENDERED_CHECK =
   '(function(){' +
   'var eds=document.querySelectorAll(".monaco-editor");' +
+  'var collapsed=false;' +
   'for(var i=0;i<eds.length;i++){' +
-  'var ed=eds[i];' +
-  'if(ed.getBoundingClientRect().height<=40)continue;' +
-  'var lines=ed.querySelectorAll(".view-line");' +
+  'var r=eds[i].getBoundingClientRect();' +
+  'if(r.height<=40)continue;' +
+  'if(r.width<=200){collapsed=true;continue;}' +
+  'var lines=eds[i].querySelectorAll(".view-line");' +
   'for(var j=0;j<lines.length;j++){' +
   'var t=lines[j].textContent;' +
   'if(typeof t==="string"&&t.length>0)return true;' +
   '}' +
+  '}' +
+  'if(collapsed&&window.monaco&&window.monaco.editor&&typeof window.monaco.editor.getEditors==="function"){' +
+  'try{window.monaco.editor.getEditors().forEach(function(m){' +
+  'try{var host=m.getDomNode().parentElement;' +
+  'if(host)m.layout({width:host.clientWidth,height:host.clientHeight})}catch(e){}' +
+  '})}catch(e){}' +
   '}' +
   'return false' +
   '})()'

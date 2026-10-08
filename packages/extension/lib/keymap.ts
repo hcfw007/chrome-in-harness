@@ -63,7 +63,7 @@ const NAMED_KEYS: Record<string, NamedKey> = {
   Insert: {code: 'Insert', keyCode: 45},
 }
 
-for (let i = 1; i <= 12; i += 1) {
+for (let i = 1; i <= 24; i += 1) {
   NAMED_KEYS[`F${i}`] = {code: `F${i}`, keyCode: 111 + i}
 }
 
@@ -165,7 +165,7 @@ export function resolveKey(input: string): ResolveKeyOk | ResolveKeyErr {
     }
   }
 
-  const examples = 'Enter, Backspace, Delete, Escape, Tab, ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, Insert, F1-F12, Space, or a single character'
+  const examples = 'Enter, Backspace, Delete, Escape, Tab, ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, Insert, F1-F24, Space, or a single character'
   return {ok: false, error: `unknown key "${input}". Valid examples: ${examples}`}
 }
 

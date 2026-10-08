@@ -7,15 +7,17 @@ import {
   dispatchWheel,
   elementCenter,
   ensureFocusEmulation,
+  ensureKeyPipelineAlive,
   evaluateJson,
   focusNode,
   getViewportMetrics,
   insertText,
-  readCursorPosition,
+  monacoSetValue,
+  readInputFocus,
   scrollIntoViewIfNeeded,
   viewportCenter,
 } from '../lib/cdp-commands'
-import type {ClickOptions, CursorPosition} from '../lib/cdp-commands'
+import type {ClickOptions, CursorPosition, FocusState} from '../lib/cdp-commands'
 import {resolveKey} from '../lib/keymap'
 import type {InputModifier} from '../lib/keymap'
 import {planVerbatim} from '../lib/verbatim'
@@ -152,13 +154,14 @@ export const typeText: ToolHandler = async (params) => {
     ref?: string
     text: string
     submit?: boolean
-    mode?: 'insert' | 'verbatim'
+    mode?: 'insert' | 'verbatim' | 'set'
     clear?: boolean
     focus?: 'none' | 'click-ref'
     tabId?: number
   }
   const mode = raw.mode ?? 'insert'
   const focus = raw.focus ?? 'click-ref'
+  const insertedLines = (raw.text.match(/\n/g) ?? []).length
 
   // verbatim 承诺「整段原样插入、零按键事件」：Enter 按键会触发 Monaco 自动缩进，必须拒绝
   if (mode === 'verbatim' && raw.submit === true) {
@@ -168,7 +171,71 @@ export const typeText: ToolHandler = async (params) => {
     )
   }
 
+  /**
+   * set：monaco.setValue 原子写整个缓冲。绕开键盘/焦点/IME 通路——窗口失焦、
+   * 键路死亡、编辑器塌缩都不影响，也无需点击聚焦（实测最稳的写盘路径）。
+   * ref 可省：页面只有一个编辑器时自动选中。
+   */
+  if (mode === 'set') {
+    if (raw.submit === true) {
+      throw new Error(
+        'submit is not supported with mode="set": activate the Run/Submit button by its ref instead.',
+      )
+    }
+    if (raw.clear === true) {
+      throw new Error('clear is redundant with mode="set": setValue replaces the whole buffer in one atomic write.')
+    }
+    const target = await authorizeTab(raw.tabId)
+    await ensureAttached(target.tabId)
+    const result =
+      raw.ref !== undefined
+        ? await withRef(target.tabId, raw.ref, async (entry) => {
+          return monacoSetValue(target.tabId, entry.backendDOMNodeId, raw.text)
+        })
+        : await monacoSetValue(target.tabId, undefined, raw.text)
+    if (result.kind === 'no-monaco') {
+      throw new Error('mode="set" requires the page to expose window.monaco; use mode="insert" or "verbatim" instead.')
+    }
+    if (result.kind === 'ref-not-in-editor') {
+      throw new Error(
+        `the ref is not inside a monaco editor (${result.editorCount} editor(s) on the page); ` +
+          'pass a ref inside the editor or omit ref to auto-target a single editor.',
+      )
+    }
+    if (result.kind === 'ambiguous') {
+      throw new Error(`${result.editorCount} monaco editors on the page — pass a ref inside the target editor.`)
+    }
+    return {
+      mode: 'set',
+      insertedLines,
+      ...(result.insertionPoint !== null ? {insertionPoint: result.insertionPoint} : {}),
+    }
+  }
+
   const target = await prepareInputTab(raw.tabId)
+
+  /** 焦点落盘验证：读不到焦点状态（页面导航中等）按通过处理，绝不误伤。 */
+  const readFocusSafe = async (): Promise<FocusState | null> => {
+    try {
+      return await readInputFocus(target.tabId)
+    } catch {
+      return null
+    }
+  }
+  const assertLanded = (state: FocusState | null, when: 'before' | 'after'): void => {
+    if (state === null || state.editable) return
+    const hint =
+      when === 'before'
+        ? 'text would go nowhere. Click the editor/input ref first (or wait editorRendered), then retry.'
+        : 'text did not land — focus left the editable during typing; re-click the target and verify with get_text.'
+    throw new Error(`INPUT_NOT_LANDED: focus is on <${state.tag}> — ${hint}`)
+  }
+  const prepareKeyboardPath = async (): Promise<void> => {
+    assertLanded(await readFocusSafe(), 'before')
+    if (mode === 'verbatim' || raw.clear === true || raw.submit === true) {
+      await ensureKeyPipelineAlive(target.tabId)
+    }
+  }
 
   /**
    * verbatim：按计划器逐步执行（文本逐字原样，前导空白/换行不做任何特殊处理）。
@@ -204,23 +271,20 @@ export const typeText: ToolHandler = async (params) => {
     }
   }
 
-  // 结果带插入点概要：模型可自查落点（Monaco 模板残留缩进叠加的教训）
-  const insertedLines = (raw.text.match(/\n/g) ?? []).length
+  // 结果带插入点概要 + 输入后落盘验证（焦点不在可编辑元素 = 文本必然没落盘）
   const buildResult = async (): Promise<{
     mode: 'insert' | 'verbatim'
     insertedLines: number
     insertionPoint?: CursorPosition
   }> => {
-    let point: CursorPosition | null
-    try {
-      point = await readCursorPosition(target.tabId)
-    } catch {
-      point = null
-    }
+    const after = await readFocusSafe()
+    assertLanded(after, 'after')
     return {
       mode,
       insertedLines,
-      ...(point !== null ? {insertionPoint: point} : {}),
+      ...(after !== null && after.insertionPoint !== null
+        ? {insertionPoint: after.insertionPoint}
+        : {}),
     }
   }
 
@@ -233,6 +297,7 @@ export const typeText: ToolHandler = async (params) => {
         await focusNode(target.tabId, entry.backendDOMNodeId)
       })
     }
+    await prepareKeyboardPath()
     if (mode === 'verbatim') await typeVerbatim()
     else await typeInsert()
     return buildResult()
@@ -244,6 +309,7 @@ export const typeText: ToolHandler = async (params) => {
   await withRef(target.tabId, raw.ref, async (entry) => {
     const {x, y} = await locate(target.tabId, entry.backendDOMNodeId)
     await dispatchClick(target.tabId, x, y)
+    await prepareKeyboardPath()
     if (mode === 'verbatim') await typeVerbatim()
     else await typeInsert()
   })
@@ -261,6 +327,8 @@ export const pressKey: ToolHandler = async (params) => {
   const resolved = resolveKey(raw.key)
   if (!resolved.ok) throw new Error(resolved.error)
   const target = await prepareInputTab(raw.tabId)
+  // 键路探针：resize/失焦后按键会静默丢失，死了先自愈、仍死显式报错
+  await ensureKeyPipelineAlive(target.tabId)
   if (raw.ref !== undefined) {
     await withRef(target.tabId, raw.ref, async (entry) => {
       await scrollIntoViewIfNeeded(target.tabId, entry.backendDOMNodeId)

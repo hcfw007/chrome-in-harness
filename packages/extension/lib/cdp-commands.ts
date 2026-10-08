@@ -8,7 +8,7 @@ import {send, subscribeEvents, unsubscribeEvents, waitForEvent} from './cdp'
 import {consoleBuffer} from './console-buffer'
 import type {ConsoleLevel} from './console-buffer'
 import type {InputModifier, KeyDispatch} from './keymap'
-import {keyDownText, modifierBitmask} from './keymap'
+import {keyDownText, modifierBitmask, resolveKey} from './keymap'
 import {networkBuffer} from './network-buffer'
 
 /** 每个 debugger 会话 enable 一次的 domain 集合（SW 内存级）。 */
@@ -388,18 +388,32 @@ export interface CursorPosition {
   readonly col: number
 }
 
+/** 焦点状态：activeElement 是否可编辑（monaco/原生输入/contentEditable）+ 光标落点。 */
+export interface FocusState {
+  readonly tag: string
+  readonly editable: boolean
+  readonly monaco: boolean
+  readonly insertionPoint: CursorPosition | null
+}
+
 /**
- * 读当前焦点元素的光标落点（1-based line/col）。
+ * 读当前焦点元素与光标（1-based line/col）。
  * Monaco 优先走 window.monaco API（隐藏 textarea 的 value 只含当前行，按行数算是错的）；
- * 原生 textarea/input 用 selectionStart 推算。读不到返回 null，调用方自行省略该字段。
+ * 原生 textarea/input 用 selectionStart 推算。焦点元素不是可编辑节点时 editable=false
+ * （type 的落盘验证依据：往 body/button 上输入必然不落盘）。
  */
-export async function readCursorPosition(tabId: number): Promise<CursorPosition | null> {
+export async function readInputFocus(tabId: number): Promise<FocusState> {
   const script =
     '(function () {' +
     '  var active = document.activeElement;' +
-    '  if (!active) return null;' +
+    '  if (!active) return {tag: "none", editable: false, monaco: false, line: null, col: null};' +
+    '  var tag = (active.tagName || "").toLowerCase();' +
+    '  var monacoHost = false;' +
+    '  try { monacoHost = !!(active.closest && active.closest(".monaco-editor")) } catch (err) {}' +
+    '  var editable = monacoHost || tag === "textarea" || tag === "input" || active.isContentEditable === true;' +
+    '  var pos = null;' +
     '  try {' +
-    '    if (active.closest && active.closest(".monaco-editor")) {' +
+    '    if (monacoHost) {' +
     '      var monaco = window.monaco;' +
     '      if (monaco && monaco.editor && typeof monaco.editor.getEditors === "function") {' +
     '        var editor = monaco.editor.getEditors().find(function (e) {' +
@@ -407,25 +421,175 @@ export async function readCursorPosition(tabId: number): Promise<CursorPosition 
     '        });' +
     '        if (editor) {' +
     '          var p = editor.getPosition();' +
-    '          if (p) return {line: p.lineNumber, col: p.column};' +
+    '          if (p) pos = {line: p.lineNumber, col: p.column};' +
     '        }' +
     '      }' +
-    '      return null;' +
+    '    } else if (tag === "textarea" || tag === "input") {' +
+    '      var sel = active.selectionStart;' +
+    '      if (typeof sel === "number") {' +
+    '        var upto = String(active.value || "").slice(0, sel);' +
+    '        var nl = upto.lastIndexOf("\\n");' +
+    '        pos = {line: upto.split("\\n").length, col: sel - nl};' +
+    '      }' +
     '    }' +
     '  } catch (err) {}' +
-    '  var tag = active.tagName.toLowerCase();' +
-    '  if (tag !== "textarea" && tag !== "input") return null;' +
-    '  var pos = active.selectionStart;' +
-    '  if (typeof pos !== "number") return null;' +
-    '  var upto = String(active.value || "").slice(0, pos);' +
-    '  var nl = upto.lastIndexOf("\\n");' +
-    '  return {line: upto.split("\\n").length, col: pos - nl};' +
+    '  return {tag: tag, editable: editable, monaco: monacoHost, line: pos ? pos.line : null, col: pos ? pos.col : null};' +
     '})()'
-  const value = await evaluateJson<CursorPosition | null>(tabId, script)
-  if (value === null || typeof value !== 'object') return null
-  const record = value as Record<string, unknown>
-  if (typeof record['line'] !== 'number' || typeof record['col'] !== 'number') return null
-  return {line: record['line'], col: record['col']}
+  const value = await evaluateJson<Record<string, unknown>>(tabId, script)
+  if (typeof value !== 'object' || value === null) {
+    return {tag: 'unknown', editable: false, monaco: false, insertionPoint: null}
+  }
+  const line = value['line']
+  const col = value['col']
+  const insertionPoint =
+    typeof line === 'number' && typeof col === 'number' ? {line, col} : null
+  return {
+    tag: typeof value['tag'] === 'string' ? value['tag'] : 'unknown',
+    editable: value['editable'] === true,
+    monaco: value['monaco'] === true,
+    insertionPoint,
+  }
+}
+
+/**
+ * 键盘通路探针：注入 F13 keydown 监听后派发一次 F13，验证 CDP 按键事件真的到达页面。
+ * 背景：窗口 resize/失焦后 keyDown 通路可能整体静默失效（insertText 走 IME 仍活），
+ * 按键工具必须先探测，死了就显式报错而不是无声吞掉。
+ * 局限：焦点在 iframe 内时事件派发到子 frame，主 frame 监听收不到——调用方需结合
+ * 焦点状态排除该情形。探针自身异常按「通路存活」处理（宁可放过不可误伤）。
+ */
+const KEY_PROBE_INSTALL =
+  '(function(){' +
+  'if(!window.__cicKeyProbeInstalled){' +
+  'window.__cicKeyProbeInstalled=true;' +
+  'window.addEventListener("keydown",function(e){if(e.key==="F13"){window.__cicKeyProbeHit=true}},true)' +
+  '}' +
+  'window.__cicKeyProbeHit=false;' +
+  'return true' +
+  '})()'
+const KEY_PROBE_READ = '(window.__cicKeyProbeHit===true)'
+
+export async function probeKeyPipeline(tabId: number): Promise<boolean> {
+  const probe = resolveKey('F13')
+  if (!probe.ok) return true
+  try {
+    await evaluateJson(tabId, KEY_PROBE_INSTALL)
+    await dispatchKey(tabId, probe.info, [])
+    return (await evaluateJson<unknown>(tabId, KEY_PROBE_READ)) === true
+  } catch {
+    return true
+  }
+}
+
+/**
+ * 键路保障：探针探测 → 死了先自愈 → 仍死则显式报错（resize/失焦后按键静默丢失的战报教训）。
+ * 自愈两级：① 强制重开焦点仿真（清缓存重发，仿真状态可能被浏览器侧静默丢弃）；
+ * ② activateTab 真激活兜底（内含最小化窗口恢复）。
+ * 焦点在 iframe 内时探针天然收不到主 frame 事件，跳过死亡判定（无法验证，不误伤）。
+ */
+export async function ensureKeyPipelineAlive(tabId: number): Promise<void> {
+  if (await probeKeyPipeline(tabId)) return
+  focusEmulated.delete(tabId)
+  await ensureFocusEmulation(tabId)
+  if (await probeKeyPipeline(tabId)) return
+  await activateTab(tabId)
+  if (await probeKeyPipeline(tabId)) return
+  const focus = await readInputFocus(tabId).catch(
+    (): FocusState => ({tag: 'unknown', editable: false, monaco: false, insertionPoint: null}),
+  )
+  if (focus.tag === 'iframe') return
+  throw new Error(
+    'KEY_PIPELINE_DEAD: key events are not reaching the page (typically after a window resize or focus loss; ' +
+      'IME text insertion may still work, but key presses are silently dropped). ' +
+      'The window was re-focused without effect — avoid the keyboard path: use type(mode="set") for Monaco buffers ' +
+      'or click-based activation, or restore the browser window manually.',
+  )
+}
+
+export type MonacoSetKind = 'ok' | 'no-monaco' | 'ref-not-in-editor' | 'ambiguous'
+
+export interface MonacoSetResult {
+  readonly kind: MonacoSetKind
+  readonly insertionPoint: CursorPosition | null
+  readonly editorCount: number
+}
+
+/** monaco setValue 公共段：原子写缓冲后读回光标落点（文本经 JSON 序列化内联）。 */
+function monacoApplySetValue(text: string): string {
+  return (
+    `editor.setValue(${JSON.stringify(text)});` +
+    'var p = editor.getPosition();' +
+    'return {kind: "ok", line: p ? p.lineNumber : null, col: p ? p.column : null};'
+  )
+}
+
+/**
+ * mode="set" 的落点：monaco.setValue 原子写整个缓冲。
+ * 完全绕开键盘/焦点/IME 通路（窗口失焦、编辑器塌缩都不影响），也无需点击聚焦。
+ * 带 backendNodeId 时用「编辑器 DOM 包含该节点」定位；不带时页面必须只有一个编辑器。
+ */
+export async function monacoSetValue(
+  tabId: number,
+  backendNodeId: number | undefined,
+  text: string,
+): Promise<MonacoSetResult> {
+  const guard =
+    'var monaco = window.monaco;' +
+    'if (!monaco || !monaco.editor || typeof monaco.editor.getEditors !== "function") ' +
+    'return {kind: "no-monaco", count: 0};' +
+    'var editors = monaco.editor.getEditors();'
+  if (backendNodeId !== undefined) {
+    const objectId = await resolveBackendNode(tabId, backendNodeId)
+    const result = await send<{result?: {value?: unknown}}>(tabId, 'Runtime.callFunctionOn', {
+      objectId,
+      functionDeclaration:
+        'function (text) {' +
+        guard +
+        'var editor = null;' +
+        'for (var i = 0; i < editors.length; i++) {' +
+        '  try { if (editors[i].getDomNode().contains(this)) { editor = editors[i]; break } } catch (err) {}' +
+        '}' +
+        'if (!editor) return {kind: "ref-not-in-editor", count: editors.length};' +
+        monacoApplySetValue(text) +
+        '}',
+      arguments: [{value: text}],
+      returnByValue: true,
+    })
+    return parseMonacoSetResult(result.result?.value)
+  }
+  const result = await evaluateJson<unknown>(
+    tabId,
+    '(function () {' +
+      guard +
+      'if (editors.length !== 1) return {kind: "ambiguous", count: editors.length};' +
+      'var editor = editors[0];' +
+      monacoApplySetValue(text) +
+      '})()',
+  )
+  return parseMonacoSetResult(result)
+}
+
+function parseMonacoSetResult(raw: unknown): MonacoSetResult {
+  if (typeof raw !== 'object' || raw === null) {
+    return {kind: 'no-monaco', insertionPoint: null, editorCount: 0}
+  }
+  const record = raw as Record<string, unknown>
+  const kind = record['kind']
+  const line = record['line']
+  const col = record['col']
+  const count = typeof record['count'] === 'number' ? record['count'] : 0
+  if (kind === 'ok') {
+    return {
+      kind: 'ok',
+      insertionPoint:
+        typeof line === 'number' && typeof col === 'number' ? {line, col} : null,
+      editorCount: count,
+    }
+  }
+  if (kind === 'ref-not-in-editor' || kind === 'ambiguous') {
+    return {kind, insertionPoint: null, editorCount: count}
+  }
+  return {kind: 'no-monaco', insertionPoint: null, editorCount: count}
 }
 
 /** 一个键的完整 press：keyDown（组合键无 text，走 rawKeyDown）+ keyUp。 */
@@ -461,22 +625,26 @@ export async function focusNode(tabId: number, backendNodeId: number): Promise<v
   await send(tabId, 'DOM.focus', {backendNodeId})
 }
 
-/** 按 ref 读取子树 innerText（get_text 的取数路径）。 */
-export async function resolveNodeInnerText(tabId: number, backendNodeId: number): Promise<string> {
-  // CDP 返回形状：{object: RemoteObject}（属性名就叫 object）
+/** backendNodeId → JS 对象 objectId；DOM agent 未绑定时 getDocument 重绑再试一次。 */
+async function resolveBackendNode(tabId: number, backendNodeId: number): Promise<string> {
   const resolveOnce = async (): Promise<string | undefined> => {
     const resolved = await send<{object?: {objectId?: string}}>(tabId, 'DOM.resolveNode', {backendNodeId})
     return resolved.object?.objectId
   }
   let objectId = await resolveOnce()
   if (objectId === undefined) {
-    // DOM agent 未绑定该文档（新会话/导航后）：getDocument 重绑后再试一次
     await getDocumentRoot(tabId)
     objectId = await resolveOnce()
   }
   if (objectId === undefined) {
     throw new Error('could not resolve the referenced element to a JS object (it may be stale); call snapshot again')
   }
+  return objectId
+}
+
+/** 按 ref 读取子树 innerText（get_text 的取数路径）。 */
+export async function resolveNodeInnerText(tabId: number, backendNodeId: number): Promise<string> {
+  const objectId = await resolveBackendNode(tabId, backendNodeId)
   const result = await send<{result?: {value?: unknown}}>(tabId, 'Runtime.callFunctionOn', {
     objectId,
     functionDeclaration:

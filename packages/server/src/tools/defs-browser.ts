@@ -29,7 +29,9 @@ const navigate = defineTool({
     'Navigate the tab to a URL and wait for the chosen readiness signal. ' +
     'waitUntil: "load" (wait for the load event), "domcontentloaded" (default; DOM ready + 500ms quiet), ' +
     '"networkidle" (DOM ready + no in-flight network requests for 500ms). ' +
-    'Waits up to ~8s; a timeout is reported but the page is often still usable — snapshot to check.',
+    'Waits up to ~8s; a timeout is reported but the page is often still usable — snapshot to check. ' +
+    'On React SPAs, event handlers may attach AFTER load (hydration): clicking right after navigate can be ' +
+    'silently ineffective — wait for an app-specific marker (wait text/selector) before the first click.',
   schema: navigateParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'navigate', args, navigateResult)
@@ -122,20 +124,23 @@ const type = defineTool({
     'Type text into an element. Default behavior: click the element (focusing it), insert the text, ' +
     'and press Enter when submit is true. ' +
     'Text is inserted verbatim — leading/trailing whitespace and newlines are preserved with no trimming. ' +
-    'mode:"verbatim" guarantees exact reproduction in code editors: per-line insertion with newline handling that ' +
-    'bypasses Monaco auto-indent and bracket auto-closing — use this for multi-line indented code. ' +
-    'submit is rejected in verbatim mode (call press_key instead). ' +
-    'clear:true empties the field first (focus + Ctrl+A + Delete). ' +
-    'focus:"none" skips the implicit click: with ref it only DOM.focuses the element (caret stays put — ' +
-    'avoids Monaco jumping to end-of-line at the click point); without ref it types into whatever is focused. ' +
-    'Best practice for Monaco-style editors: prefer full replacement — click the editor, press_key(key:"a", ' +
-    'modifiers:["ctrl"]), then type — instead of appending after Ctrl+End, where the caret often sits after ' +
-    'template indentation on a blank line and silently stacks indentation. ' +
-    'Returns the caret landing point insertionPoint {line, col} (1-based) and insertedLines for self-checking where the text landed.',
+    'mode:"set" is the most robust path for Monaco editors: one atomic setValue of the WHOLE buffer via the ' +
+    'window.monaco API — immune to keyboard-pipeline death (window resize/focus loss), editor collapse and ' +
+    'focus races; no click needed, ref optional when the page has exactly one editor. ' +
+    'mode:"verbatim" guarantees exact reproduction through the input pipeline: per-line insertion with newline ' +
+    'handling that bypasses Monaco auto-indent and bracket auto-closing. ' +
+    'submit is rejected with verbatim/set (activate the Run/Submit button by its ref instead). ' +
+    'clear:true empties the field first (focus + Ctrl+A + Delete); redundant and rejected with set. ' +
+    'focus:"none" skips the implicit click: with ref it only DOM.focuses the element (caret stays put); ' +
+    'without ref it types into whatever is focused. ' +
+    'Landing is verified: when focus is not on an editable element the call fails with INPUT_NOT_LANDED ' +
+    'instead of silently discarding the text. Returns the caret landing point insertionPoint {line, col} ' +
+    '(1-based) and insertedLines for self-checking where the text landed.',
   schema: typeParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'type', args, typeResult)
     const bits: string[] = []
+    if (result.mode === 'set') bits.push('set via monaco setValue')
     if (result.mode === 'verbatim') bits.push('verbatim')
     if (args.clear === true) bits.push('cleared first')
     if (args.focus === 'none') bits.push('no click')
@@ -155,10 +160,12 @@ const pressKey = defineTool({
   title: 'Press a key or key combination',
   description:
     'Press a single key, optionally with modifiers. key examples: Enter, Backspace, Delete, Escape, Tab, ' +
-    'ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, Insert, F1-F12, Space, or a single character (a, A, !, :, space). ' +
+    'ArrowUp/Down/Left/Right, Home, End, PageUp/PageDown, Insert, F1-F24, Space, or a single character (a, A, !, :, space). ' +
     'modifiers: ["ctrl"|"alt"|"shift"|"meta"] — e.g. press_key(key:"a", modifiers:["ctrl"]) selects all. ' +
     'Pass ref to scroll the element into view, DOM.focus it (no click), then press; otherwise the key goes to the current focus. ' +
-    'Use this for editing existing content (Backspace/Ctrl+A/arrow keys) instead of embedding control chars in type.',
+    'Key delivery is probed first: after window resize/focus loss CDP key events can be silently dropped ' +
+    '(IME insertion still works) — the tool re-focuses the window to recover and fails loudly with ' +
+    'KEY_PIPELINE_DEAD when keys would not land; switch to type(mode="set") or click-based activation then.',
   schema: pressKeyParams.shape,
   async run(args, call) {
     await callBridge(call, 'press_key', args, okResult)
@@ -213,8 +220,9 @@ const wait = defineTool({
   title: 'Wait for a condition',
   description:
     'Wait until a condition holds on the page: text appears in the body, a CSS selector matches, the URL contains a substring, ' +
-    'or editorRendered:true (a Monaco-style editor exists with height > 40px and a non-empty visible view-line — ' +
-    'guards against collapsed/hidden editor instances after SPA soft navigation). Exactly one condition per call. ' +
+    'or editorRendered:true (a Monaco-style editor exists with height > 40px, width > 200px and a non-empty ' +
+    'visible view-line — resize-collapsed editors are auto-recovered via monaco layout(); guards against both ' +
+    'collapsed/hidden instances and 5x5 narrow-strip false readiness after window resizes). Exactly one condition per call. ' +
     'Returns {matched, timedOut} — a timeout is not an error; snapshot afterwards to see the current state.',
   // 注册无 refine 的 shape（refine 会破坏 tools/list 的 JSON schema）；四选一的约束在 run 里落地。
   schema: waitParamsShape,
