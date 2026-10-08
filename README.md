@@ -111,8 +111,9 @@ npm run dev:server
 # 3. Chrome 加载扩展：chrome://extensions → 开发者模式 → 加载已解压的扩展程序
 #    选择 packages/extension/.output/chrome-mv3
 
-# 4. 注册 MCP 到客户端
-claude mcp add -s user chrome-in-harness --transport http http://127.0.0.1:12306/mcp
+# 4. 注册 MCP 到客户端（opencode 示例，~/.config/opencode/opencode.json）
+#    { "mcp": { "chrome-in-harness": { "type": "remote", "url": "http://127.0.0.1:12306/mcp" } } }
+#    或直接跑 `npx chrome-in-harness start` 自动写入该条目
 ```
 
 打包本地发版产物（三个 npm tarball + 扩展 zip，输出到 `dist-release/`）：
