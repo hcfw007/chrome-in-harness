@@ -60,7 +60,7 @@ Chrome 扩展 (MV3, WXT)  --WebSocket client-->  本地 server (Node, ws on 127.
 
 ### 实战技巧（SPA / LeetCode 类站点，实测沉淀）
 
-- **写解法**：`type mode="set"` 一步全量写盘，比 click → Ctrl+A → type 更稳更快；提交用 Run/Submit 按钮 ref 点击
+- **写解法**：`type mode="set"` 一步全量写盘，比 click → Ctrl+A → type 更稳更快；写入前自动检测并恢复塌缩布局（返回 `layoutRecovered:true` 可观测），无需再手动 rect 预检 + layout()；提交用 Run/Submit 按钮 ref 点击
 - **水合竞态**：React 站点刚加载完时点击会被静默吞掉（handler 尚未接线）——`navigate` 后先 `wait`（app 级 marker）再首次点击
 - **verdict 真值**：LeetCode 2026 UI 提交后自动跳转 `/submissions/detail/<id>/`，结果面板经常不渲染（非 AC 尤甚）；唯一可靠 oracle 是直接 `navigate` 到 `/submissions/detail/<id>/v2/check/` 读 JSON（同源即在白名单内）
 - **AC 判定**：`wait(text:"Accepted")` 有假阳性（题目统计区常驻 "Accepted 2.3M/4M" 字样）；`wait(text:"Beats")` 才是 AC-only 信号，Run 结果用 `wait(text:"Runtime")`

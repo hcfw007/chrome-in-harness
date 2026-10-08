@@ -512,14 +512,34 @@ export interface MonacoSetResult {
   readonly kind: MonacoSetKind
   readonly insertionPoint: CursorPosition | null
   readonly editorCount: number
+  /** 写入前编辑器曾塌缩并被自动 layout() 恢复（resize 后 5×5 窄条）。 */
+  readonly layoutRecovered: boolean
 }
 
-/** monaco setValue 公共段：原子写缓冲后读回光标落点（文本经 JSON 序列化内联）。 */
+/**
+ * monaco setValue 公共段：写入前先做塌缩自检——编辑器 rect 显著小于宿主容器
+ * （width/height 低于其一半）说明 resize 后布局已陈旧（5×5 窄条），
+ * 先按宿主尺寸强制 layout() 再写（文本经 JSON 序列化内联）。
+ * 浏览器侧根源（隐藏 tab 上 ResizeObserver 不触发）无法从外部修补，
+ * 在每个交互点保证布局健康是工具能做到的等价根治。
+ */
 function monacoApplySetValue(text: string): string {
   return (
+    'var healed = false;' +
+    'try {' +
+    '  var dom = editor.getDomNode();' +
+    '  var host = dom.parentElement;' +
+    '  if (host && host.clientWidth > 0 && host.clientHeight > 0) {' +
+    '    var r = dom.getBoundingClientRect();' +
+    '    if (r.width < host.clientWidth * 0.5 || r.height < host.clientHeight * 0.5) {' +
+    '      editor.layout({width: host.clientWidth, height: host.clientHeight});' +
+    '      healed = true;' +
+    '    }' +
+    '  }' +
+    '} catch (e) {}' +
     `editor.setValue(${JSON.stringify(text)});` +
     'var p = editor.getPosition();' +
-    'return {kind: "ok", line: p ? p.lineNumber : null, col: p ? p.column : null};'
+    'return {kind: "ok", healed: healed, line: p ? p.lineNumber : null, col: p ? p.column : null};'
   )
 }
 
@@ -571,7 +591,7 @@ export async function monacoSetValue(
 
 function parseMonacoSetResult(raw: unknown): MonacoSetResult {
   if (typeof raw !== 'object' || raw === null) {
-    return {kind: 'no-monaco', insertionPoint: null, editorCount: 0}
+    return {kind: 'no-monaco', insertionPoint: null, editorCount: 0, layoutRecovered: false}
   }
   const record = raw as Record<string, unknown>
   const kind = record['kind']
@@ -584,12 +604,13 @@ function parseMonacoSetResult(raw: unknown): MonacoSetResult {
       insertionPoint:
         typeof line === 'number' && typeof col === 'number' ? {line, col} : null,
       editorCount: count,
+      layoutRecovered: record['healed'] === true,
     }
   }
   if (kind === 'ref-not-in-editor' || kind === 'ambiguous') {
-    return {kind, insertionPoint: null, editorCount: count}
+    return {kind, insertionPoint: null, editorCount: count, layoutRecovered: false}
   }
-  return {kind: 'no-monaco', insertionPoint: null, editorCount: count}
+  return {kind: 'no-monaco', insertionPoint: null, editorCount: count, layoutRecovered: false}
 }
 
 /** 一个键的完整 press：keyDown（组合键无 text，走 rawKeyDown）+ keyUp。 */

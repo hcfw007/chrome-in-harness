@@ -152,6 +152,17 @@ describe('browser defs', () => {
     ])
   })
 
+  test('type set mode surfaces layoutRecovered when a collapsed editor was healed', async () => {
+    const fake = fakeBridge({
+      mode: 'set',
+      insertedLines: 0,
+      insertionPoint: {line: 1, col: 1},
+      layoutRecovered: true,
+    })
+    const content = await run(byName('type'), {text: 'code'}, fake.call)
+    expect((content[0] as {text: string}).text).toContain('layout recovered')
+  })
+
   test('type without ref targets the focused element (focus:none path)', async () => {
     const fake = fakeBridge({mode: 'insert', insertedLines: 0, insertionPoint: {line: 1, col: 2}})
     const content = await run(byName('type'), {text: 'x', focus: 'none'}, fake.call)

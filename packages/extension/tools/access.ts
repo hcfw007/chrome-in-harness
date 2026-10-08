@@ -29,12 +29,22 @@ function notManaged(tabId: number): Error {
   )
 }
 
-/** 解析操作目标 tab：显式 tabId 必须在受管组内；缺省 = 受管组内最近活动的 tab（绝不是用户的活动 tab）。 */
+export function tabClosed(tabId: number): Error {
+  return toolError(
+    TOOL_ERROR_CODES.TAB_CLOSED,
+    `tab ${tabId} no longer exists (likely closed between sessions). ` +
+      'Call tab_new to open a fresh managed tab, or tab_list to pick an existing one.',
+  )
+}
+
+/** 解析操作目标 tab：显式 tabId 必须存在且在受管组内；缺省 = 受管组内最近活动的 tab（绝不是用户的活动 tab）。 */
 export async function resolveTargetTab(tabId?: number): Promise<TargetTab> {
   if (tabId !== undefined) {
+    // 先区分「已关闭」与「不在组内」：死 tab 报 TAB_CLOSED，而不是建议 takeover（死 tab 无法 takeover）
+    const tab = await chrome.tabs.get(tabId).catch(() => undefined)
+    if (tab === undefined || tab.id === undefined) throw tabClosed(tabId)
     if (!(await isTabManaged(tabId))) throw notManaged(tabId)
-    const tab = await chrome.tabs.get(tabId)
-    return {tabId: tab.id as number, url: tab.url ?? ''}
+    return {tabId: tab.id, url: tab.url ?? ''}
   }
   const tab = await findManagedTab()
   if (tab === undefined || tab.id === undefined) {

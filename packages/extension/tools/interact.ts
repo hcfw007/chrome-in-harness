@@ -208,6 +208,7 @@ export const typeText: ToolHandler = async (params) => {
     return {
       mode: 'set',
       insertedLines,
+      ...(result.layoutRecovered ? {layoutRecovered: true} : {}),
       ...(result.insertionPoint !== null ? {insertionPoint: result.insertionPoint} : {}),
     }
   }

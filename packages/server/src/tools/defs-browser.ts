@@ -127,6 +127,8 @@ const type = defineTool({
     'mode:"set" is the most robust path for Monaco editors: one atomic setValue of the WHOLE buffer via the ' +
     'window.monaco API — immune to keyboard-pipeline death (window resize/focus loss), editor collapse and ' +
     'focus races; no click needed, ref optional when the page has exactly one editor. ' +
+    'A collapsed editor (resize artifact) is auto-recovered via forced layout() before writing — ' +
+    'reported as layoutRecovered:true; no manual pre-check needed. ' +
     'mode:"verbatim" guarantees exact reproduction through the input pipeline: per-line insertion with newline ' +
     'handling that bypasses Monaco auto-indent and bracket auto-closing. ' +
     'submit is rejected with verbatim/set (activate the Run/Submit button by its ref instead). ' +
@@ -148,6 +150,7 @@ const type = defineTool({
     if (result.insertionPoint !== undefined) {
       bits.push(`cursor at L${result.insertionPoint.line}:C${result.insertionPoint.col}`)
     }
+    if (result.layoutRecovered === true) bits.push('layout recovered')
     const suffix = bits.length > 0 ? ` (${bits.join(', ')})` : ''
     return toolText(
       `Typed into ${args.ref ?? 'focused element'}${suffix}${args.submit ? ' and pressed Enter' : ''}`,

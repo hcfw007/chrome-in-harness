@@ -26,10 +26,12 @@ export const TOOL_ERROR_CODES = {
   SCRIPT_ERROR: 'SCRIPT_ERROR',
   PERMISSION_DENIED: 'PERMISSION_DENIED',
   WINDOW_NOT_INTERACTIVE: 'WINDOW_NOT_INTERACTIVE',
-  /** 窗口 resize/失焦后 CDP 按键事件不再送达页面（IME insertText 仍活），按键会静默丢失。 */
+  /** 键盘通路死亡（窗口 resize/失焦后 CDP 按键事件不再送达页面）。 */
   KEY_PIPELINE_DEAD: 'KEY_PIPELINE_DEAD',
   /** 焦点不在可编辑元素上，输入的文本不会落盘（type 显式报错而非静默成功）。 */
   INPUT_NOT_LANDED: 'INPUT_NOT_LANDED',
+  /** 目标 tab 已关闭（常见于会话间隔后沿用旧 tabId）——开新 tab 或改用现存 tab。 */
+  TAB_CLOSED: 'TAB_CLOSED',
 } as const
 
 export type ToolErrorCode = (typeof TOOL_ERROR_CODES)[keyof typeof TOOL_ERROR_CODES]
@@ -119,6 +121,8 @@ export const typeResult = z.object({
   insertionPoint: z
     .object({line: z.number().int().min(1), col: z.number().int().min(1)})
     .optional(),
+  /** mode="set" 时编辑器曾塌缩并被自动 layout() 恢复（resize 后 5×5 窄条的防御性自愈）。 */
+  layoutRecovered: z.boolean().optional(),
 })
 
 export const getTextParams = z.object({

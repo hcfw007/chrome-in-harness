@@ -23,18 +23,25 @@ vi.mock('../lib/domain-confirmation', () => ({
   requestDomainConfirmation: (host: string, url: string) => requestDomainConfirmation(host, url),
 }))
 
-const {tabSelect, tabClose, tabNew} = await import('./tabs.js')
+const {tabSelect, tabClose, tabNew, takeoverTab} = await import('./tabs.js')
 
-/** 最小 chrome.tabs / tabGroups 桩。 */
+/** 最小 chrome.tabs / tabGroups 桩。tabId 404 模拟「已关闭」的 tab。 */
 function installChrome(overrides: {
   update?: (tabId: number, props: unknown) => Promise<unknown>
   remove?: (tabId: number) => Promise<void>
   create?: (props: unknown) => Promise<{id?: number; windowId?: number}>
   groupsUpdate?: (id: number, props: unknown) => Promise<void>
   group?: (props: unknown) => Promise<number>
+  get?: (tabId: number) => Promise<unknown>
 }): void {
   ;(globalThis as unknown as {chrome: unknown}).chrome = {
     tabs: {
+      get:
+        overrides.get ??
+        (async (tabId: number) => {
+          if (tabId === 404) throw new Error('No tab with id: 404')
+          return {id: tabId, windowId: 1, url: 'https://project.feishu.cn/x', active: false}
+        }),
       update:
         overrides.update ??
         (async (tabId: number) => {
@@ -102,7 +109,32 @@ describe('tab_select / tab_close 组边界', () => {
   test('select surfaces a not-found error for a vanished managed tab', async () => {
     isTabManaged.mockResolvedValue(true)
     installChrome({update: async () => undefined})
-    await expect(tabSelect({tabId: 777} as never)).rejects.toThrow('not found')
+    await expect(tabSelect({tabId: 777} as never)).rejects.toThrow('TAB_CLOSED')
+  })
+})
+
+describe('takeover_tab 生命周期语义', () => {
+  test('rejects a closed tab with TAB_CLOSED instead of a generic not-found', async () => {
+    // 会话间隔后沿用旧 tabId、tab 已被关闭：必须给出可行动的 TAB_CLOSED 而非误导性 not found
+    installChrome({})
+    await expect(takeoverTab({tabId: 404} as never)).rejects.toThrow('TAB_CLOSED')
+  })
+
+  test('takeover of a closed managed-style id never reaches grouping', async () => {
+    const group = vi.fn(async () => 7)
+    installChrome({group})
+    await expect(takeoverTab({tabId: 404} as never)).rejects.toThrow('tab 404 no longer exists')
+    expect(group).not.toHaveBeenCalled()
+  })
+
+  test('takeover returns immediately when the tab is already managed', async () => {
+    isTabManaged.mockResolvedValue(true)
+    getAllowlist.mockResolvedValue(['feishu.cn'])
+    const group = vi.fn(async () => 7)
+    installChrome({group})
+    const result = (await takeoverTab({tabId: 42} as never)) as {tabId: number; url: string}
+    expect(result).toEqual({tabId: 42, url: 'https://project.feishu.cn/x'})
+    expect(group).not.toHaveBeenCalled()
   })
 })
 

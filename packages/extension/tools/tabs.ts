@@ -8,7 +8,7 @@ import {
   getManagedGroupIds,
   isTabManaged,
 } from '../lib/tab-group'
-import {assertUrlAllowed, authorizeNavigate, toolError} from './access'
+import {assertUrlAllowed, authorizeNavigate, tabClosed, toolError} from './access'
 
 import type {ToolHandler} from './types'
 
@@ -16,8 +16,11 @@ import type {ToolHandler} from './types'
  * tab_select / tab_close 的组边界：只允许操作 Chrome in Harness 组内的 tab。
  * 其余工具（snapshot/click/…）都在 access.ts 里做同一道校验；这两个虽不触碰 debugger，
  * 但 select 会抢用户焦点、close 会关掉用户任意 tab，破坏性更强，必须同样收口。
+ * 已关闭的 tab 先报 TAB_CLOSED（会话间隔后沿用旧 tabId 的常见坑），不与组边界混淆。
  */
 async function assertManaged(tabId: number): Promise<void> {
+  const tab = await chrome.tabs.get(tabId).catch(() => undefined)
+  if (tab === undefined || tab.id === undefined) throw tabClosed(tabId)
   if (!(await isTabManaged(tabId))) {
     throw toolError(
       TOOL_ERROR_CODES.TAB_NOT_MANAGED,
@@ -80,7 +83,7 @@ export const tabSelect: ToolHandler = async (params) => {
   const {tabId} = params as {tabId: number}
   await assertManaged(tabId)
   const updated = await chrome.tabs.update(tabId, {active: true}).catch(() => undefined)
-  if (updated === undefined) throw new Error(`tab ${tabId} not found`)
+  if (updated === undefined) throw tabClosed(tabId)
   return {}
 }
 
@@ -88,7 +91,7 @@ export const tabClose: ToolHandler = async (params) => {
   const {tabId} = params as {tabId: number}
   await assertManaged(tabId)
   await chrome.tabs.remove(tabId).catch(() => {
-    throw new Error(`tab ${tabId} not found`)
+    throw tabClosed(tabId)
   })
   refStore.invalidate(tabId)
   return {}
@@ -102,7 +105,7 @@ export const tabClose: ToolHandler = async (params) => {
 export const takeoverTab: ToolHandler = async (params) => {
   const {tabId} = params as {tabId: number}
   const tab = await chrome.tabs.get(tabId).catch(() => undefined)
-  if (tab === undefined || tab.id === undefined) throw new Error(`tab ${tabId} not found`)
+  if (tab === undefined || tab.id === undefined) throw tabClosed(tabId)
   const url = tab.url ?? ''
   await assertUrlAllowed(url)
   if (await isTabManaged(tabId)) {
