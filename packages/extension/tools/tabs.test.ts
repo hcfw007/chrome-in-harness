@@ -1,12 +1,15 @@
 /** tabs 工具单测：覆盖 tab_select / tab_close 的受管组边界（mock chrome 依赖）。 */
 import {afterEach, beforeEach, describe, expect, test, vi} from 'vitest'
 
-// tab-group 与 whitelist 依赖 chrome.*，测试里以桩替换；tabs.ts 只用到 isTabManaged。
+// tab-group 与 whitelist 依赖 chrome.*，测试里以桩替换。
 const isTabManaged = vi.fn<(tabId: number) => Promise<boolean>>()
+const findReusableManagedGroup =
+  vi.fn<(windowId: number | undefined) => Promise<{id: number; windowId: number} | undefined>>()
 vi.mock('../lib/tab-group', () => ({
   GROUP_TITLE: 'Chrome in Harness',
   GROUP_COLOR: 'blue',
   isTabManaged: (tabId: number) => isTabManaged(tabId),
+  findReusableManagedGroup: (windowId: number | undefined) => findReusableManagedGroup(windowId),
 }))
 
 const getAllowlist = vi.fn<() => Promise<readonly string[]>>()
@@ -21,7 +24,6 @@ function installChrome(overrides: {
   update?: (tabId: number, props: unknown) => Promise<unknown>
   remove?: (tabId: number) => Promise<void>
   create?: (props: unknown) => Promise<{id?: number; windowId?: number}>
-  groupsQuery?: (q: unknown) => Promise<Array<{id: number}>>
   groupsUpdate?: (id: number, props: unknown) => Promise<void>
   group?: (props: unknown) => Promise<number>
 }): void {
@@ -41,7 +43,6 @@ function installChrome(overrides: {
       create: overrides.create ?? (async () => ({id: 9001, windowId: 1})),
     },
     tabGroups: {
-      query: overrides.groupsQuery ?? (async () => []),
       update: overrides.groupsUpdate ?? (async () => {}),
     },
   }
@@ -52,6 +53,8 @@ function installChrome(overrides: {
 
 beforeEach(() => {
   isTabManaged.mockReset()
+  findReusableManagedGroup.mockReset()
+  findReusableManagedGroup.mockResolvedValue(undefined)
   getAllowlist.mockReset()
 })
 
@@ -106,18 +109,33 @@ describe('tab_new 组边界与白名单', () => {
     expect(create).not.toHaveBeenCalled()
   })
 
-  test('new creates and groups an allowed tab', async () => {
+  test('new creates and groups an allowed tab when no managed group exists', async () => {
     getAllowlist.mockResolvedValue(['feishu.cn'])
     const create = vi.fn(async () => ({id: 9001, windowId: 1}))
     const group = vi.fn(async () => 7)
     const groupsUpdate = vi.fn(async () => {})
-    // groupTab 先 query 现有组；返回空数组即走「新建组」分支
-    installChrome({create, group, groupsQuery: async () => [], groupsUpdate})
+    // 无可复用组 → 走「新建组并命名」分支
+    findReusableManagedGroup.mockResolvedValue(undefined)
+    installChrome({create, group, groupsUpdate})
     const result = (await tabNew({url: 'https://project.feishu.cn/x'} as never)) as {
       tabId: number
     }
     expect(result.tabId).toBe(9001)
     expect(group).toHaveBeenCalled()
     expect(groupsUpdate).toHaveBeenCalled()
+  })
+
+  test('new reuses an existing managed group instead of creating a new one', async () => {
+    getAllowlist.mockResolvedValue(['feishu.cn'])
+    const create = vi.fn(async () => ({id: 9001, windowId: 1}))
+    const group = vi.fn(async () => 7)
+    const groupsUpdate = vi.fn(async () => {})
+    // 已有受管组（标题可能带 ⏳ 前缀，但 findReusableManagedGroup 已归一匹配）
+    findReusableManagedGroup.mockResolvedValue({id: 55, windowId: 1})
+    installChrome({create, group, groupsUpdate})
+    await tabNew({url: 'https://project.feishu.cn/x'} as never)
+    // 并入既有组：groupId 指定 55，且不新建、不改标题
+    expect(group).toHaveBeenCalledWith({groupId: 55, tabIds: 9001})
+    expect(groupsUpdate).not.toHaveBeenCalled()
   })
 })

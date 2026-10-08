@@ -27,12 +27,17 @@ const ping = defineTool({
 const tabList = defineTool({
   name: 'tab_list',
   title: 'List open tabs',
-  description: 'List all open tabs with their ids, titles and URLs.',
+  description:
+    'List all open tabs with their ids, titles and URLs. Tabs marked [managed] are inside the ' +
+    '"Chrome in Harness" group and operable by the other tools.',
   schema: tabListParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'tab_list', args, tabListResult)
     const lines = result.tabs.map(
-      (t) => `tabId=${t.tabId}${t.active ? ' [active]' : ''} ${t.url}${t.title ? ` — "${t.title}"` : ''}`,
+      (t) =>
+        `tabId=${t.tabId}${t.active ? ' [active]' : ''}${
+          t.managed ? ` [managed:${t.groupId}]` : ''
+        } ${t.url}${t.title ? ` — "${t.title}"` : ''}`,
     )
     return toolText(lines.length > 0 ? lines.join('\n') : 'No open tabs.')
   },

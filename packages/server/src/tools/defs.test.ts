@@ -201,14 +201,14 @@ describe('tab defs', () => {
   test('tab_list renders active marker and titles', async () => {
     const fake = fakeBridge({
       tabs: [
-        {tabId: 1, title: 'Docs', url: 'https://docs.example.com', active: true},
-        {tabId: 2, title: '', url: 'about:blank', active: false},
+        {tabId: 1, title: 'Docs', url: 'https://docs.example.com', active: true, groupId: 5, managed: true},
+        {tabId: 2, title: '', url: 'about:blank', active: false, groupId: null, managed: false},
       ],
     })
     const tabList = byName('tab_list')
     const content = await run(tabList, {}, fake.call)
     const text = (content[0] as {text: string}).text
-    expect(text).toContain('tabId=1 [active] https://docs.example.com — "Docs"')
+    expect(text).toContain('tabId=1 [active] [managed:5] https://docs.example.com — "Docs"')
     expect(text).toContain('tabId=2 about:blank')
   })
 

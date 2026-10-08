@@ -27,6 +27,28 @@ export async function getManagedGroups(): Promise<chrome.tabGroups.TabGroup[]> {
   return groups.filter((g) => typeof g.title === 'string' && MANAGED_TITLES.has(g.title))
 }
 
+/** 受管组 id 集合（供 tab_list 标注 managed，避免逐 tab 查询）。 */
+export async function getManagedGroupIds(): Promise<Set<number>> {
+  return new Set((await getManagedGroups()).map((g) => g.id))
+}
+
+/**
+ * 找一个可复用的受管组：优先同窗口的，其次任意窗口的第一个。
+ * 必须用 MANAGED_TITLES（含 ⏳/✅/❌ 前缀）匹配——组标题在每次工具调用时会被
+ * setGroupsState 改写带前缀，按裸标题精确查询会找不到既有组而误建新组。
+ */
+export async function findReusableManagedGroup(
+  windowId: number | undefined,
+): Promise<chrome.tabGroups.TabGroup | undefined> {
+  const groups = await getManagedGroups()
+  if (groups.length === 0) return undefined
+  if (windowId !== undefined) {
+    const sameWindow = groups.find((g) => g.windowId === windowId)
+    if (sameWindow !== undefined) return sameWindow
+  }
+  return groups[0]
+}
+
 /** tab 是否在受管组内。tab 不存在 / 无组 / 组名不符 → false。 */
 export async function isTabManaged(tabId: number): Promise<boolean> {
   const tab = await chrome.tabs.get(tabId).catch(() => undefined)

@@ -2,7 +2,13 @@
 import {TOOL_ERROR_CODES} from '@chrome-in-harness/protocol'
 import {refStore} from '../lib/ref-store'
 import {isUrlAllowed} from '../lib/site-filter'
-import {GROUP_COLOR, GROUP_TITLE, isTabManaged} from '../lib/tab-group'
+import {
+  GROUP_COLOR,
+  GROUP_TITLE,
+  findReusableManagedGroup,
+  getManagedGroupIds,
+  isTabManaged,
+} from '../lib/tab-group'
 import {getAllowlist} from '../lib/whitelist'
 import {authorizeNavigate, toolError} from './access'
 
@@ -31,15 +37,16 @@ async function assertManaged(tabId: number): Promise<void> {
   }
 }
 
-/** 把 tab 并进本窗口的 Chrome in Harness 组；不存在则新建。归组失败不影响 tab 本身。 */
+/**
+ * 把 tab 并进已有的 Chrome in Harness 组；不存在才新建一个。归组失败不影响 tab 本身。
+ * 复用必须走前缀归一匹配（见 findReusableManagedGroup）：组标题会被 setGroupsState
+ * 改写为「⏳/✅/❌ Chrome in Harness」，按裸标题精确查询会每次都误判为无组而反复新建。
+ */
 async function groupTab(tabId: number, windowId: number | undefined): Promise<void> {
   try {
-    const existing = await chrome.tabGroups.query(
-      windowId !== undefined ? {title: GROUP_TITLE, windowId} : {title: GROUP_TITLE},
-    )
-    const groupId = existing[0]?.id
-    if (groupId !== undefined) {
-      await chrome.tabs.group({groupId, tabIds: tabId})
+    const existing = await findReusableManagedGroup(windowId)
+    if (existing !== undefined) {
+      await chrome.tabs.group({groupId: existing.id, tabIds: tabId})
       return
     }
     const newId = await chrome.tabs.group({
@@ -53,16 +60,21 @@ async function groupTab(tabId: number, windowId: number | undefined): Promise<vo
 }
 
 export const tabList: ToolHandler = async () => {
-  const tabs = await chrome.tabs.query({})
+  const [tabs, managedGroupIds] = await Promise.all([chrome.tabs.query({}), getManagedGroupIds()])
   return {
     tabs: tabs
       .filter((t) => t.id !== undefined)
-      .map((t) => ({
-        tabId: t.id as number,
-        title: t.title ?? '',
-        url: t.url ?? '',
-        active: t.active === true,
-      })),
+      .map((t) => {
+        const groupId = t.groupId !== undefined && t.groupId !== -1 ? t.groupId : null
+        return {
+          tabId: t.id as number,
+          title: t.title ?? '',
+          url: t.url ?? '',
+          active: t.active === true,
+          groupId,
+          managed: groupId !== null && managedGroupIds.has(groupId),
+        }
+      }),
   }
 }
 

@@ -279,6 +279,10 @@ export const tabListResult = z.object({
       title: z.string(),
       url: z.string(),
       active: z.boolean(),
+      /** 所属 tab group id；无组为 null。 */
+      groupId: z.number().int().nullable(),
+      /** 是否在受管的 Chrome in Harness 组内（可用于判断复用是否生效）。 */
+      managed: z.boolean(),
     }),
   ),
 })
