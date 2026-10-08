@@ -13,7 +13,7 @@
     "test": "npm run build -w @chrome-in-harness/protocol && npm run test -w @chrome-in-harness/protocol && npm run test -w @chrome-in-harness/server && npm run build -w @chrome-in-harness/extension && npm run test -w @chrome-in-harness/extension && npm run test -w @chrome-in-harness/launcher",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "pack": "npm run build -w @chrome-in-harness/protocol && npm run build -w @chrome-in-harness/server && npm run pack -w @chrome-in-harness/server && npm run pack -w @chrome-in-harness/protocol && npm run pack -w @chrome-in-harness/launcher"
+    "pack": "npm run build && mkdir -p dist-release && npm pack -w @chrome-in-harness/protocol -w @chrome-in-harness/server -w @chrome-in-harness/launcher --pack-destination ./dist-release && npm run zip -w @chrome-in-harness/extension && cp packages/extension/.output/chrome-in-harness-*.zip dist-release/chrome-in-harness-extension.zip"
   },
   "engines": {
     "node": ">=20"
