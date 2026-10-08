@@ -9,7 +9,7 @@ Chrome 扩展 (MV3, WXT)  --WebSocket client-->  本地 server (Node, ws on 127.
                                                     |-- Streamable HTTP MCP --> 任意 MCP 客户端
 ```
 
-三个包：`@chrome-in-harness/protocol`（两端共用的 WS 协议定义与类型守卫）、`@chrome-in-harness/server`、`@chrome-in-harness/extension`。
+四个包：`@chrome-in-harness/protocol`（两端共用的 WS 协议定义、zod schema 与类型守卫）、`@chrome-in-harness/server`（WS 桥 + MCP 端点）、`@chrome-in-harness/extension`（MV3 扩展）、`@chrome-in-harness/launcher`（`chrome-in-harness` CLI）。
 
 - 扩展 service worker 作为 WS **client** 主动连 `ws://127.0.0.1:8765`（无需 Chrome 额外暴露端口，连接由扩展发起）
 - server 在 `http://127.0.0.1:12306/mcp` 暴露 MCP（Streamable HTTP，无状态模式）；收到 tool call 后通过 WS 转发给扩展，按消息 `id` 关联等待响应，超时 30s
@@ -20,7 +20,7 @@ Chrome 扩展 (MV3, WXT)  --WebSocket client-->  本地 server (Node, ws on 127.
 - **WS 握手校验 Origin**：只接受 `chrome-extension://` 来源。浏览器强制写入 Origin 且页面无法伪造，因此恶意网页无法连上 `127.0.0.1:8765` 顶掉真扩展并接管 tool call。设 `CIC_EXTENSION_ID` 可进一步锁定到具体扩展 ID
 - **MCP 端点开启 DNS rebinding 防护**：强制校验 Host 为 `127.0.0.1:12306` / `localhost:12306`；Origin 存在时一并校验（浏览器页面会被拒，非浏览器 MCP 客户端正常放行）
 - **已知不覆盖**：本机任意进程可伪造 Origin 连上 WS。该类攻击者通常已能直接读 Chrome profile，不在本层威胁模型内
-- 扩展权限按需申请，当前只有 `alarms` + loopback host permission；Phase 2 需要 `tabs`/`scripting`（或 `debugger`）时再追加
+- 扩展权限按需申请：`alarms`（SW keepalive）、`tabs` + `tabGroups`（tab 管理 / 受管组边界 / URL 变化失效 ref）、`storage`（域名白名单持久化）、`debugger`（CDP 会话，仅在 attach 时出现「正在调试」黄条）、`permissions`（`request_permission` 弹窗授权）；host permission 仅 loopback `127.0.0.1:8765`，运行时通过 `optional_host_permissions` 白名单授权目标站
 
 ## Phase 1 当前进度
 
@@ -32,23 +32,30 @@ Chrome 扩展 (MV3, WXT)  --WebSocket client-->  本地 server (Node, ws on 127.
 - [x] Phase 2：a11y 快照 + ref 交互 + 域名白名单（见下）
 - [x] Phase 3a：`read_console` / `read_network` / `wait` / 运行时白名单授权 + CI（见下）
 - [x] Phase 3b：受限 `evaluate_script`、权限弹窗授权 `request_permission`（见下）
+- [x] 后台操作不抢前台（焦点仿真）、受管组复用、`click_at` / `press_key` / `get_text` / `takeover_tab`
 
 ## Phase 2：快照 + ref 交互 + 白名单
 
-**工具集**（18 个）：`ping`、`navigate`、`snapshot`、`click`、`hover`、`type`、`scroll`、`screenshot`、`tab_list`、`tab_new`、`tab_select`、`tab_close`、`read_console`、`read_network`、`wait`、`add_allowlist_domain`、`evaluate_script`、`request_permission`。
+**工具集**（22 个）：`ping`、`navigate`、`snapshot`、`click`、`click_at`、`hover`、`type`、`press_key`、`get_text`、`scroll`、`screenshot`、`tab_list`、`tab_new`、`tab_select`、`tab_close`、`takeover_tab`、`read_console`、`read_network`、`wait`、`add_allowlist_domain`、`evaluate_script`、`request_permission`。
 
 - **read_console / read_network**：CDP 采集的 console 与网络请求元数据（响应体不采集）。缓冲从 tab 首次被工具 attach 起积累
 - **wait**：等待文本 / CSS 选择器 / URL 子串出现（页面内 Promise 轮询，默认 8s 上限 30s），超时返回 `{matched:false}` 而非报错
 - **add_allowlist_domain**：运行时扩白名单。仅在用户明确要求时调用——对话即授权界面
 - **evaluate_script**：受限 `Runtime.evaluate` 执行页面上下文 JS。黑名单拒绝网络访问（fetch/XHR/WebSocket/sendBeacon）、eval/Function、导航（location/window.open）、document.write、debugger 与 `chrome.*`；`awaitPromise:true` 需 async IIFE；结果 JSON 序列化超限截断
 - **request_permission**：针对域名发起 `chrome.permissions.request` 原生授权弹窗，授予后同步写入 storage 白名单。仅当用户明确要求时调用
+- **takeover_tab**：把已打开的用户 tab 收编进受管组（`tab_list` 标 `[managed:<groupId>]` 便于识别）；仅在用户明确要求在该 tab 工作时调用，URL 必须已在白名单
 
-- **snapshot**：`chrome.debugger` + CDP `Accessibility.getFullAXTree`，渲染成 Playwright ariaSnapshot 风格的缩进文本，交互元素带 `[ref=eN]`；click/hover/type/scroll 只接受 ref，杜绝选择器漂移
-- **ref 生命周期**：ref 绑定 tab 的最近一次快照；导航/关 tab/debugger 分离即失效；SPA 重渲染导致的节点失效在 CDP 层映射为 `STALE_REF`；SW 被杀后报 `NO_SNAPSHOT` 引导重新 snapshot
+- **snapshot**：`chrome.debugger` + CDP `Accessibility.getFullAXTree`，渲染成 Playwright ariaSnapshot 风格的缩进文本，交互元素带 `[ref=eN-<token>]`；click/hover/type/scroll 只接受 ref，杜绝选择器漂移
+- **ref 生命周期**：ref 绑定 tab 的最近一次快照，格式 `e<N>-<token>`（token 编码 worker 代 + 快照版本）；导航/关 tab/debugger 分离即失效；跨 worker 代或过期一律显式 `STALE_REF`（拒绝静默错点）；同代快照更替时交互工具按元素身份自动重试一次；SW 被杀后报 `NO_SNAPSHOT` 引导重新 snapshot
+- **click_at**：ref 命中不了时（iframe/Canvas/icon-only 容器）的坐标点击兜底，视口 CSS 像素，越界显式报错
+- **press_key**：单键/组合键（`ctrl`/`alt`/`shift`/`meta` + 键名），可选先 focus 指定 ref
+- **get_text**：优先读 AX value（虚拟滚动编辑器全文唯一可靠读数），innerText 兜底，上限 8KB
+- **type**：`mode="insert"`（默认）或 `mode="verbatim"`（Monaco 类编辑器逐行 insertText 还原缩进，无 trim）；返回插入点概要供模型自查
 - **真实输入**：点击/输入走 CDP `Input.*`（isTrusted=true），与真人操作无法区分
 - **域名白名单**：`chrome.storage.local` 持久化，扩展侧在 attach 前校验，空名单 = 拒绝全部；规则 `example.com` 匹配自身与任意深度子域；首次安装自动打开 options 页
+- **受管组复用**：`tab_new` / `takeover_tab` 优先并入本窗口既有的 "Chrome in Harness" 组（组标题带 `⏳/✅/❌` 操作状态前缀时也识别为同一组），避免每开一个 tab 就新建组
 - **代价（已接受）**：attach 期间 Chrome 显示「正在调试」黄条；目标 tab 打开 DevTools 会顶掉扩展会话，工具报 `DEBUGGER_BUSY`，关闭 DevTools 后自动恢复
-- **输入前提（自动处理）**：CDP `Input.*` 在后台 tab 与最小化窗口上会被静默丢弃；输入类工具派发前会激活目标 tab，窗口最小化时自动恢复并聚焦，恢复失败报 `WINDOW_NOT_INTERACTIVE`
+- **后台操作（自动处理，不抢前台）**：CDP `Input.*` 在后台 tab 上会被静默丢弃；输入类工具派发前开 `Emulation.setFocusEmulationEnabled` 焦点仿真（Playwright / Claude-in-Chrome 同款），让后台 tab 直接接收输入，**不激活 tab、不打断用户当前视图**；仿真不可用时回退激活 tab；窗口最小化时自动恢复并聚焦，恢复失败报 `WINDOW_NOT_INTERACTIVE`
 
 ## 安装与使用
 
@@ -94,7 +101,7 @@ npx chrome-in-harness doctor
 # 1. 构建（protocol → server → extension，顺序有依赖）
 npm install
 npm run build          # 扩展产物在 packages/extension/.output/chrome-mv3
-npm test               # protocol 守卫 + server 桥接单测
+npm test               # 四包 vitest（protocol 守卫 + server 桥接 + extension 纯逻辑 + launcher）
 npm run lint           # @ddyscn/lint-config（ESLint 9 flat config）
 npm run lint:fix
 
@@ -106,6 +113,12 @@ npm run dev:server
 
 # 4. 注册 MCP 到客户端
 claude mcp add -s user chrome-in-harness --transport http http://127.0.0.1:12306/mcp
+```
+
+打包本地发版产物（三个 npm tarball + 扩展 zip，输出到 `dist-release/`）：
+
+```bash
+npm run pack
 ```
 
 然后在客户端里让模型调 `ping`，应返回扩展版本与 userAgent。
