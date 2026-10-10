@@ -127,9 +127,9 @@ describe('probeKeyPipeline（默认动作探针）', () => {
   /** 按脚本内容路由 Runtime.evaluate：BEGIN（createElement）→ 注入值；READ（input.value）→ 注入结果。 */
   function mockProbe(alive: boolean, beginOk = true): {dispatchCount: () => number} {
     let dispatchCount = 0
-    sendMock.mockImplementation(async (_tabId: number, method: string, params: {expression?: string}) => {
+    sendMock.mockImplementation(async (_tabId: number, method: string, params?: Record<string, unknown>) => {
       if (method === 'Runtime.evaluate') {
-        const expr = params?.expression ?? ''
+        const expr = String(params?.['expression'] ?? '')
         if (expr.includes('createElement')) return {result: {value: beginOk}}
         return {result: {value: alive}}
       }
@@ -161,9 +161,9 @@ describe('probeKeyPipeline（默认动作探针）', () => {
   })
 
   test('读取脚本异常（无法确认）：按存活处理', async () => {
-    sendMock.mockImplementation(async (_tabId: number, method: string, params: {expression?: string}) => {
+    sendMock.mockImplementation(async (_tabId: number, method: string, params?: Record<string, unknown>) => {
       if (method === 'Runtime.evaluate') {
-        const expr = params?.expression ?? ''
+        const expr = String(params?.['expression'] ?? '')
         if (expr.includes('createElement')) return {result: {value: true}}
         return {result: {value: null}}
       }

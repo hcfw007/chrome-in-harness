@@ -3,15 +3,16 @@
  * chrome-in-harness launcher：一条命令完成「检查/引导装扩展 + 起 server + 写 MCP 配置」。
  *
  * 用法：
- *   npx chrome-in-harness           检查环境并给出下一步
- *   npx chrome-in-harness start     启动本地 server（前台，Ctrl-C 退出）
- *   npx chrome-in-harness doctor    完整环境自检
+ *   npx @chrome-in-harness/launcher           检查环境并给出下一步
+ *   npx @chrome-in-harness/launcher start     启动本地 server（前台，Ctrl-C 退出）
+ *   npx @chrome-in-harness/launcher doctor    完整环境自检
  */
 
 import {spawn} from 'node:child_process'
 import {existsSync} from 'node:fs'
-import {readFile, writeFile} from 'node:fs/promises'
+import {mkdir, readFile, writeFile} from 'node:fs/promises'
 import net from 'node:net'
+import {homedir} from 'node:os'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 
@@ -106,31 +107,52 @@ export function mergeOpencodeConfig(
   url: string,
 ): {config: Record<string, unknown>; added: boolean} {
   const base = existing === undefined ? {} : {...existing}
-  base['mcp'] ??= {}
-  const mcp = base['mcp'] as Record<string, unknown>
+  const currentMcp = base['mcp']
+  if (currentMcp !== undefined && !isConfigObject(currentMcp)) {
+    throw new Error('OpenCode configuration mcp must be an object; the original file was not changed.')
+  }
+  const mcp = currentMcp ?? {}
   if (mcp['chrome-in-harness'] !== undefined) return {config: base, added: false}
-  mcp['chrome-in-harness'] = {type: 'remote', url, enabled: true}
-  return {config: base, added: true}
+  return {
+    config: {...base, mcp: {...mcp, 'chrome-in-harness': {type: 'remote', url, enabled: true}}},
+    added: true,
+  }
+}
+
+function isConfigObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+async function readOpencodeConfig(configPath: string): Promise<Record<string, unknown>> {
+  let raw: string
+  try {
+    raw = await readFile(configPath, 'utf8')
+  } catch (error) {
+    if (isConfigObject(error) && error['code'] === 'ENOENT') return {}
+    throw new Error(`Cannot read OpenCode configuration at ${configPath}; the original file was not changed.`, {cause: error})
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch (error) {
+    throw new Error(`Invalid JSON in OpenCode configuration at ${configPath}; the original file was not changed.`, {cause: error})
+  }
+  if (!isConfigObject(parsed)) {
+    throw new Error(`OpenCode configuration at ${configPath} must be an object; the original file was not changed.`)
+  }
+  return parsed
 }
 
 /** 往 opencode 全局配置写入 MCP 条目（不覆盖已有同名条目）。 */
-async function writeOpencodeConfig(): Promise<void> {
-  const home = process.env['HOME'] ?? ''
-  const configPath = path.join(home, '.config', 'opencode', 'opencode.json')
-  let config: Record<string, unknown> = {}
-  if (existsSync(configPath)) {
-    try {
-      config = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>
-    } catch {
-      config = {}
-    }
-  }
+export async function writeOpencodeConfig(configPath = path.join(homedir(), '.config', 'opencode', 'opencode.json')): Promise<void> {
+  const config = await readOpencodeConfig(configPath)
   const {config: merged, added} = mergeOpencodeConfig(config, SERVER_URL)
   if (!added) {
     log('  opencode 配置已包含 chrome-in-harness，跳过。')
     return
   }
-  await writeFile(configPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8')
+  await mkdir(path.dirname(configPath), {recursive: true})
+  await writeFile(configPath, `${JSON.stringify(merged, null, 2)}\n`, {encoding: 'utf8', mode: 0o600})
   log(`  已写入 opencode 全局配置: ${configPath}`)
 }
 
@@ -145,9 +167,9 @@ async function doctor(): Promise<void> {
   }
   await detectClients()
   log('\n下一步：')
-  log('  1. npx chrome-in-harness start    # 启动 server')
+  log('  1. npx @chrome-in-harness/launcher start    # 启动 server')
   log('  2. 在 Chrome 加载扩展（chrome://extensions → 开发者模式 → 加载已解压）')
-  log('  3. npx chrome-in-harness doctor   # 复检全链路')
+  log('  3. npx @chrome-in-harness/launcher doctor   # 复检全链路')
 }
 
 async function start(): Promise<void> {
@@ -182,7 +204,7 @@ async function start(): Promise<void> {
   log('server 启动中。Ctrl-C 停止。')
 }
 
-async function main(): Promise<void> {
+export async function runCli(): Promise<void> {
   const cmd = parseArgs(process.argv)
   if (cmd === 'start') await start()
   else if (cmd === 'doctor') await doctor()
@@ -190,18 +212,10 @@ async function main(): Promise<void> {
     log('chrome-in-harness — 通过 Chrome 扩展控制真实 Chrome profile 的浏览器 MCP')
     log('')
     log('用法：')
-    log('  npx chrome-in-harness doctor   # 环境自检')
-    log('  npx chrome-in-harness start    # 启动 server 并写入 MCP 配置')
+    log('  npx @chrome-in-harness/launcher doctor   # 环境自检')
+    log('  npx @chrome-in-harness/launcher start    # 启动 server 并写入 MCP 配置')
     log('')
     log('扩展安装：chrome://extensions → 开发者模式 → 加载已解压的扩展程序')
-    log('  （从 GitHub Releases 下载 chrome-in-harness.zip，或本仓库 packages/extension/.output/chrome-mv3）')
+    log('  （从 GitHub Releases 下载 chrome-in-harness-extension.zip，或本仓库 packages/extension/.output/chrome-mv3）')
   }
-}
-
-// 仅在作为 CLI 入口执行时运行；被测试 import 时不启动。
-if (process.argv[1] !== undefined && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
-  main().catch((error: unknown) => {
-    console.error(`launcher failed: ${error instanceof Error ? error.message : String(error)}`)
-    process.exit(1)
-  })
 }

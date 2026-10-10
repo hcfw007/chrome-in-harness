@@ -32,6 +32,17 @@ describe('mergeOpencodeConfig', () => {
     expect(config['model']).toBe('foo')
   })
 
+  test('does not mutate the existing configuration or its mcp entries', () => {
+    const existing = {model: 'foo', mcp: {other: {type: 'remote', url: 'x'}}}
+    const before = structuredClone(existing)
+    mergeOpencodeConfig(existing, URL)
+    expect(existing).toEqual(before)
+  })
+
+  test.each([null, [], 'invalid'].map((mcp) => [mcp]))('rejects an invalid mcp section: %j', (mcp) => {
+    expect(() => mergeOpencodeConfig({mcp}, URL)).toThrow(/mcp.*object/i)
+  })
+
   test('does not overwrite an existing entry', () => {
     const existing = {mcp: {'chrome-in-harness': {type: 'local', command: ['x']}}}
     const {config, added} = mergeOpencodeConfig(existing, URL)

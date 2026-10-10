@@ -98,20 +98,23 @@ Chrome 扩展 · MV3 service worker / WXT
 
 ```bash
 # 1. 启动本地 server 并自动写入 OpenCode 全局配置
-npx chrome-in-harness start
+npx @chrome-in-harness/launcher start
 
 # 2. 装扩展：Chrome 打开 chrome://extensions → 开发者模式 → 加载已解压的扩展程序
 #    选择 GitHub Releases 下载的 chrome-in-harness-extension.zip 解压目录，
 #    或本仓库 packages/extension/.output/chrome-mv3
 
 # 3. 自检全链路
-npx chrome-in-harness doctor
+npx @chrome-in-harness/launcher doctor
 ```
 
-`npx chrome-in-harness start` 会：
+`npx @chrome-in-harness/launcher start` 会：
 - 检测 server 是否已在运行（已运行则直接复用）
 - 启动本地 server（WS `127.0.0.1:8765` ↔ MCP `http://127.0.0.1:12306/mcp`）
 - 自动向 `~/.config/opencode/opencode.json` 写入 `chrome-in-harness` 的 remote MCP 条目
+- 首次使用会创建配置目录；已有同名 MCP 条目会保留。已有配置无法读取或不是合法 JSON 对象时会报错退出，不覆盖原文件
+
+其他 MCP 客户端可手动注册 `http://127.0.0.1:12306/mcp`；launcher 只自动配置 OpenCode。
 
 然后在客户端里让模型调 `ping`，应返回扩展版本与 userAgent。
 
@@ -123,13 +126,14 @@ npx chrome-in-harness doctor
 
 ## 开发步骤
 
-> CI：push / PR 自动跑 lint + test + build（.github/workflows/ci.yml）。
+> CI：push / PR 自动跑 lint → test → 扩展 typecheck → build（.github/workflows/ci.yml）。
 
 ```bash
 # 1. 使用 Node 22，与 CI 保持一致；在仓库根目录安装与验证
 npm ci
 npm run lint           # @ddyscn/lint-config（ESLint flat config）
 npm test               # 构建 protocol / extension，并运行四包 Vitest
+npm run typecheck:extension # 构建扩展并执行独立的 TypeScript 检查
 npm run build          # protocol → server → extension → launcher
 # 扩展产物：packages/extension/.output/chrome-mv3
 # 自动修复格式 / lint：npm run lint:fix
@@ -143,7 +147,7 @@ npm run dev:server
 
 # 4. 注册 MCP 到客户端（opencode 示例，~/.config/opencode/opencode.json）
 #    { "mcp": { "chrome-in-harness": { "type": "remote", "url": "http://127.0.0.1:12306/mcp" } } }
-#    或直接跑 `npx chrome-in-harness start` 自动写入该条目
+#    或直接跑 `npx @chrome-in-harness/launcher start` 自动写入该条目
 ```
 
 打包本地发版产物（三个 npm tarball + 扩展 zip，输出到 `dist-release/`）：

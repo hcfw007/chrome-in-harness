@@ -36,6 +36,7 @@ jobs:
 
       - run: npm run lint
       - run: npm test
+      - run: npm run typecheck:extension
       - run: npm run build
 
       # 顺序：protocol 是 server/launcher 的依赖，必须最先发。
@@ -62,6 +63,7 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - run: npm run build -w @chrome-in-harness/protocol
       - run: npm run zip -w @chrome-in-harness/extension
       - name: Collect extension zip
         run: |

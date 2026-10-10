@@ -119,7 +119,8 @@ export class RefStore {
     const levels = this.history.get(tabId) ?? []
     for (let i = levels.length - 1; i >= 0; i -= 1) {
       const snapshot = levels[i]
-      const entry = snapshot?.refs.get(ref)
+      if (snapshot === undefined) continue
+      const entry = snapshot.refs.get(ref)
       if (entry !== undefined) return {entry, version: snapshot.version}
     }
     return undefined

@@ -27,7 +27,7 @@
   },
   "dependencies": {
     "@chrome-in-harness/protocol": "^0.1.0",
-    "@modelcontextprotocol/sdk": "^1.19.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "ws": "^8.18.3",
     "zod": "^3.25.76"
   },

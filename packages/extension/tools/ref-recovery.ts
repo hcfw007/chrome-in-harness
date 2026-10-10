@@ -12,7 +12,7 @@ import {isStaleNodeError} from '../lib/cdp-errors'
 import {refStore} from '../lib/ref-store'
 import type {RefEntry} from '../lib/ref-store'
 import {formatSuggestions, suggestSimilarRefs} from '../lib/ref-suggest'
-import {toolError} from './access'
+import {authorizeTab, toolError} from './access'
 import {takeSnapshot} from './snapshot'
 import type {SnapshotState} from './snapshot'
 
@@ -28,20 +28,20 @@ export async function withRef<T>(
   ref: string,
   operation: (entry: RefEntry) => Promise<T>,
 ): Promise<T> {
-  const attempt = async (refreshed: boolean): Promise<T> => {
-    const result = refStore.resolve(tabId, ref)
-    if (result.kind === 'ok') {
-      try {
-        return await operation(result.entry)
-      } catch (error) {
-        if (!refreshed && isStaleNodeError(error)) return attempt(true)
-        throw error
-      }
-    }
-    if (refreshed) throw staleRefError(tabId, ref, failed.kind === 'stale_ref' ? failed.reason : undefined)
+  const result = refStore.resolve(tabId, ref)
+  if (result.kind !== 'ok') {
     return attemptAfterRecovery(tabId, ref, result, operation)
   }
-  return attempt(false)
+  try {
+    return await operation(result.entry)
+  } catch (error) {
+    if (!isStaleNodeError(error)) throw error
+    const current = refStore.resolve(tabId, ref)
+    if (current.kind !== 'ok') {
+      return attemptAfterRecovery(tabId, ref, current, operation)
+    }
+    return retrySameElement(tabId, ref, result.entry, operation)
+  }
 }
 
 /** 首次失败的恢复路径：只有同代内能找到元素旧映射时才安全重试。 */
@@ -51,23 +51,10 @@ async function attemptAfterRecovery<T>(
   failed: Exclude<ReturnType<typeof refStore.resolve>, {kind: 'ok'}>,
   operation: (entry: RefEntry) => Promise<T>,
 ): Promise<T> {
-  if (failed.kind === 'stale_ref') {
+  if (failed.kind === 'stale_ref' && failed.reason === 'superseded') {
     const historical = refStore.lookupHistorical(tabId, ref)
     if (historical !== undefined) {
-      // 同代快照更替：按元素身份在新快照里找回
-      const state = await refreshSnapshot(tabId)
-      const found = findSameElement(state, historical.entry)
-      if (found !== undefined) {
-        try {
-          return await operation(found)
-        } catch (error) {
-          if (isStaleNodeError(error)) {
-            // 找回后立刻又失效：页面正在剧烈重渲染，显式报错让调用方重新快照
-            throw staleRefError(tabId, ref, 'superseded')
-          }
-          throw error
-        }
-      }
+      return retrySameElement(tabId, ref, historical.entry, operation)
     }
   }
   if (failed.kind === 'no_snapshot') {
@@ -78,6 +65,24 @@ async function attemptAfterRecovery<T>(
     )
   }
   throw staleRefError(tabId, ref, failed.kind === 'stale_ref' ? failed.reason : undefined)
+}
+
+/** 只重取一次快照，并且只重试 backendDOMNodeId 相同的元素。 */
+async function retrySameElement<T>(
+  tabId: number,
+  ref: string,
+  lost: RefEntry,
+  operation: (entry: RefEntry) => Promise<T>,
+): Promise<T> {
+  const state = await refreshSnapshot(tabId)
+  const found = findSameElement(state, lost)
+  if (found === undefined) throw staleRefError(tabId, ref, 'superseded')
+  try {
+    return await operation(found)
+  } catch (error) {
+    if (isStaleNodeError(error)) throw staleRefError(tabId, ref, 'superseded')
+    throw error
+  }
 }
 
 /** 在新快照里按 backendDOMNodeId 找同一元素。 */
@@ -94,10 +99,10 @@ function findSameElement(state: SnapshotState, lost: RefEntry): RefEntry | undef
 }
 
 async function refreshSnapshot(tabId: number): Promise<SnapshotState> {
+  const target = await authorizeTab(tabId)
   await ensureAttached(tabId)
-  const tab = await chrome.tabs.get(tabId).catch(() => undefined)
   // 与 snapshot 工具同一路径（含弱交互扫描），保证 ref 编号与 token 全局一致
-  return takeSnapshot(tabId, tab?.url ?? '', {withWeakScan: true})
+  return takeSnapshot(tabId, target.url, {withWeakScan: true})
 }
 
 function staleRefError(tabId: number, ref: string, reason: 'era' | 'superseded' | 'legacy' | undefined): Error {
