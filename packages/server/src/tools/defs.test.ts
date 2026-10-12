@@ -251,6 +251,14 @@ describe('tab defs', () => {
     expect(byName('tab_select').description).toContain('notify the user')
   })
 
+  test.each([true, false])('ensure_tab returns a reusable tab handle: reused=%s', async (reused) => {
+    const fake = fakeBridge({tabId: 9, url: 'https://example.com', reused})
+    const content = await run(byName('ensure_tab'), {tabId: 4, url: 'https://example.com'}, fake.call)
+    expect(fake.received[0]).toEqual({tool: 'ensure_tab', params: {tabId: 4, url: 'https://example.com'}})
+    expect(JSON.parse((content[0] as {text: string}).text)).toEqual({tabId: 9, url: 'https://example.com', reused})
+    expect(byName('ensure_tab').description).toContain('Save')
+  })
+
   test('takeover_tab confirms the tab is managed', async () => {
     const fake = fakeBridge({tabId: 4, url: 'https://leetcode.com/problems/two-sum/'})
     const content = await run(byName('takeover_tab'), {tabId: 4}, fake.call)

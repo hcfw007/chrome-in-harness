@@ -23,7 +23,7 @@ vi.mock('../lib/domain-confirmation', () => ({
   requestDomainConfirmation: (host: string, url: string) => requestDomainConfirmation(host, url),
 }))
 
-const {tabSelect, tabClose, tabNew, takeoverTab} = await import('./tabs.js')
+const {tabSelect, tabClose, tabNew, takeoverTab, ensureTab} = await import('./tabs.js')
 
 /** 最小 chrome.tabs / tabGroups 桩。tabId 404 模拟「已关闭」的 tab。 */
 function installChrome(overrides: {
@@ -189,5 +189,69 @@ describe('tab_new 组边界与白名单', () => {
     // 并入既有组：groupId 指定 55，且不新建、不改标题
     expect(group).toHaveBeenCalledWith({groupId: 55, tabIds: 9001})
     expect(groupsUpdate).not.toHaveBeenCalled()
+  })
+})
+
+describe('ensure_tab', () => {
+  test('reuses the supplied managed tab without navigation, creation, or activation', async () => {
+    isTabManaged.mockResolvedValue(true)
+    const create = vi.fn(async () => ({id: 9001, windowId: 1}))
+    const update = vi.fn(async () => ({}))
+    installChrome({create, update})
+    await expect(ensureTab({tabId: 42, url: 'https://other.example'})).resolves.toEqual({
+      tabId: 42, url: 'https://project.feishu.cn/x', reused: true,
+    })
+    expect(create).not.toHaveBeenCalled()
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  test.each([undefined, 404])('creates a background tab only when no tab is supplied or it is closed: %s', async (tabId) => {
+    isTabManaged.mockResolvedValue(true)
+    getAllowlist.mockResolvedValue(['feishu.cn'])
+    const create = vi.fn(async () => ({id: 9001, windowId: 1, url: 'https://project.feishu.cn'}))
+    installChrome({create})
+    await expect(ensureTab({tabId, url: 'https://project.feishu.cn'})).resolves.toEqual({
+      tabId: 9001, url: 'https://project.feishu.cn', reused: false,
+    })
+    expect(create).toHaveBeenCalledWith({url: 'https://project.feishu.cn', active: false})
+  })
+
+  test('creates a blank background tab on first use without a URL', async () => {
+    isTabManaged.mockResolvedValue(true)
+    const create = vi.fn(async () => ({id: 9001, windowId: 1, url: 'chrome://newtab/'}))
+    installChrome({create})
+    await expect(ensureTab({})).resolves.toEqual({tabId: 9001, url: 'chrome://newtab/', reused: false})
+    expect(create).toHaveBeenCalledWith({url: undefined, active: false})
+  })
+
+  test('does not replace or take over a tab moved out of the managed group', async () => {
+    isTabManaged.mockResolvedValue(false)
+    const create = vi.fn(async () => ({id: 9001}))
+    const group = vi.fn(async () => 7)
+    installChrome({create, group})
+    await expect(ensureTab({tabId: 42})).rejects.toThrow('TAB_NOT_MANAGED')
+    expect(create).not.toHaveBeenCalled()
+    expect(group).not.toHaveBeenCalled()
+  })
+
+  test('does not interpret other Chrome errors as closed tabs', async () => {
+    const create = vi.fn(async () => ({id: 9001}))
+    installChrome({create, get: async () => {throw new Error('Chrome unavailable')}})
+    await expect(ensureTab({tabId: 42})).rejects.toThrow('Chrome unavailable')
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  test('enforces the URL allowlist before creating a replacement', async () => {
+    getAllowlist.mockResolvedValue([])
+    const create = vi.fn(async () => ({id: 9001}))
+    installChrome({create})
+    await expect(ensureTab({tabId: 404, url: 'https://unlisted.example'})).rejects.toThrow('DOMAIN_CONFIRMATION_REQUIRED')
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  test('does not report a newly created tab as usable when grouping failed', async () => {
+    isTabManaged.mockResolvedValue(false)
+    installChrome({})
+    await expect(ensureTab({})).rejects.toThrow('TAB_NOT_MANAGED')
   })
 })

@@ -4,6 +4,8 @@ import {
   addAllowlistDomainParams,
   clickAtParams,
   clickParams,
+  ensureTabParams,
+  ensureTabResult,
   getTextParams,
   getTextResult,
   navigateParams,
@@ -28,6 +30,18 @@ describe('TOOL_ERROR_CODES', () => {
 })
 
 describe('params schemas', () => {
+  test('ensure_tab accepts an optional handle and creation-only URL', () => {
+    expect(ensureTabParams.safeParse({}).success).toBe(true)
+    expect(ensureTabParams.safeParse({tabId: 42, url: 'https://example.com'}).success).toBe(true)
+    for (const tabId of [0, -1, 1.5, '42']) expect(ensureTabParams.safeParse({tabId}).success).toBe(false)
+    expect(ensureTabParams.safeParse({url: 'invalid'}).success).toBe(false)
+  })
+
+  test('ensure_tab result includes a valid tab handle and reuse status', () => {
+    expect(ensureTabResult.safeParse({tabId: 42, url: 'about:blank', reused: false}).success).toBe(true)
+    expect(ensureTabResult.safeParse({tabId: 0, url: '', reused: true}).success).toBe(false)
+    expect(ensureTabResult.safeParse({tabId: 42, url: 'about:blank'}).success).toBe(false)
+  })
   test('navigate requires a valid url', () => {
     expect(navigateParams.safeParse({url: 'https://example.com'}).success).toBe(true)
     expect(navigateParams.safeParse({url: 'not a url'}).success).toBe(false)
