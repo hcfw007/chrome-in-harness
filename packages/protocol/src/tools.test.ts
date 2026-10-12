@@ -1,6 +1,7 @@
 import {describe, expect, test} from 'vitest'
 import {
   TOOL_ERROR_CODES,
+  TOOL_NAMES,
   addAllowlistDomainParams,
   clickAtParams,
   clickParams,
@@ -22,6 +23,9 @@ import {
 } from './tools.js'
 
 describe('TOOL_ERROR_CODES', () => {
+  test('ensure_tab is included in the shared tool name contract', () => {
+    expect(TOOL_NAMES).toContain('ensure_tab')
+  })
   test('distinguishes guard rejection from runtime script failure', () => {
     expect(TOOL_ERROR_CODES.SCRIPT_REJECTED).toBe('SCRIPT_REJECTED')
     expect(TOOL_ERROR_CODES.SCRIPT_ERROR).toBe('SCRIPT_ERROR')
