@@ -35,6 +35,7 @@ function installChrome(overrides: {
   get?: (tabId: number) => Promise<unknown>
 }): void {
   ;(globalThis as unknown as {chrome: unknown}).chrome = {
+    storage: {local: {get: async () => ({})}},
     tabs: {
       get:
         overrides.get ??

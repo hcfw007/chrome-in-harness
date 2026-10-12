@@ -118,6 +118,13 @@ npx @chrome-in-harness/launcher doctor
 
 然后在客户端里让模型调 `ping`，应返回扩展版本与 userAgent。
 
+### 域名访问模式
+
+默认按域名白名单限制访问。扩展选项页提供「允许所有域名」开关，默认关闭，开启前需确认风险。
+开启后允许受管标签组内所有 HTTP/HTTPS 网站，不再逐域名确认；Chrome 内部页、扩展页及本地文件仍不允许。
+该设置保存在当前扩展的本地存储中，重载后保持。原白名单不会被清除，关闭开关后立即恢复生效。
+此模式会使用真实登录状态，可能读取敏感内容或提交真实数据，仅建议在专用测试浏览器配置与测试账号中开启。
+
 ### 发布渠道
 
 - **npm**：`@chrome-in-harness/server`（server，含 `chrome-in-harness-server` bin）、`@chrome-in-harness/launcher`（`chrome-in-harness` CLI）、`@chrome-in-harness/protocol`（协议类型）

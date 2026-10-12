@@ -30,7 +30,10 @@ general-purpose browser agent harness.
   in-memory buffers, even between calls. Closing the tab, cancelling debugging, or
   debugger detachment clears its buffers and refs.
 - A visible "is being debugged" banner appears in Chrome while a session is attached.
-- Domains must be allowlisted before any operation; an empty allowlist rejects everything.
+- By default domains must be allowlisted; an empty allowlist rejects all sites.
+  Users may explicitly enable all-domains mode on the options page after confirming
+  the risks. This permits all HTTP/HTTPS sites, but preserves managed-tab checks and
+  rejects privileged/non-web URLs. The setting persists locally and is reversible.
 
 ## Justification for `optional_host_permissions: ["*://*/*"]`
 

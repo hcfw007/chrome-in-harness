@@ -6,6 +6,7 @@
  */
 import {TOOL_ERROR_CODES} from '@chrome-in-harness/protocol'
 import type {ToolErrorCode} from '@chrome-in-harness/protocol'
+import {getAllDomainsAllowed} from '../lib/domain-access'
 import {requestDomainConfirmation} from '../lib/domain-confirmation'
 import {isUrlAllowed} from '../lib/site-filter'
 import {findManagedTab, isTabManaged} from '../lib/tab-group'
@@ -78,8 +79,18 @@ function hostOf(url: string): string | undefined {
  * 属于无法确认的情况，仍走 DOMAIN_NOT_ALLOWED。
  */
 export async function assertUrlAllowed(url: string): Promise<void> {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw toolError(TOOL_ERROR_CODES.DOMAIN_NOT_ALLOWED, 'Invalid URL; only HTTP/HTTPS websites are allowed.')
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw toolError(TOOL_ERROR_CODES.DOMAIN_NOT_ALLOWED, 'Only HTTP/HTTPS websites are allowed, even in all-domains mode.')
+  }
   const rules = await getAllowlist()
   if (isUrlAllowed(url, rules)) return
+  if (await getAllDomainsAllowed()) return
   const host = hostOf(url)
   if (host === undefined) {
     throw toolError(

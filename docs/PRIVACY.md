@@ -47,7 +47,10 @@ a dedicated test profile, account, and data. It is not an isolated browser sandb
 ## Access control
 
 - Only tabs inside the "Chrome in Harness" tab group can be operated on.
-- Only domains in your allowlist can be operated on.
+- By default, only allowlisted domains are accessible. The options page offers an
+  opt-in all-domains mode with a risk confirmation. It permits all HTTP/HTTPS sites
+  in managed tabs, but not privileged or non-web URLs. The setting is persisted
+  locally; disabling it restores the retained allowlist. Use a dedicated test profile.
 - Debugger sessions are reused after tool calls. While a session remains attached,
   console and network metadata continue to accumulate in bounded in-memory buffers,
   even between calls; collection begins on first attachment.

@@ -12,14 +12,21 @@
       #status { margin-top: .6rem; white-space: pre-line; }
       #status.ok { color: #1a7f37; }
       #status.err { color: #c0392b; }
+      .risk { border: 1px solid #c0392b; padding: .75rem; margin-bottom: 1rem; }
+      .risk p { margin-bottom: 0; color: #9c2f24; }
     </style>
   </head>
   <body>
     <h1>域名白名单</h1>
+    <section class="risk" aria-label="访问模式">
+      <label><input id="all-domains" type="checkbox" disabled /> 允许所有域名（高风险，默认关闭）</label>
+      <p>使用真实登录状态，可能读取敏感页面或提交真实数据。仅建议在专用测试浏览器配置中开启；开启前需确认风险。</p>
+      <p id="mode-status" role="status">正在加载访问模式…</p>
+    </section>
     <p class="hint">每行一个域名。规则 example.com 匹配自身与任意深度子域。访问未在名单内的域名时会自动弹出确认窗口让用户选择；本页用于预置或批量维护名单。</p>
     <textarea id="domains" placeholder="example.com&#10;wikipedia.org"></textarea>
     <button id="save">保存</button>
-    <div id="status"></div>
+    <div id="status" role="status"></div>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>
