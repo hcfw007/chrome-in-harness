@@ -9,6 +9,9 @@ function element() {
 let toggle: ReturnType<typeof element>
 let status: ReturnType<typeof element>
 let domains: ReturnType<typeof element>
+let risk: ReturnType<typeof element> & {hidden: boolean}
+let accept: ReturnType<typeof element>
+let cancel: ReturnType<typeof element>
 let store: Record<string, unknown>
 let confirm: ReturnType<typeof vi.fn<(message: string) => boolean>>
 let write: ReturnType<typeof vi.fn<(values: Record<string, unknown>) => Promise<void>>>
@@ -18,12 +21,16 @@ beforeEach(async () => {
   toggle = element()
   status = element()
   domains = element()
+  risk = {...element(), hidden: true}
+  accept = element()
+  cancel = element()
   store = {'allowlist.v1': {version: 1, domains: ['example.com']}}
   confirm = vi.fn(() => true)
   write = vi.fn(async (values) => {Object.assign(store, values)})
   const elements: Record<string, ReturnType<typeof element>> = {
     '#all-domains': toggle, '#status': status, '#domains': domains,
     '#save': element(), '#mode-status': element(),
+    '#risk-confirmation': risk, '#confirm-all-domains': accept, '#cancel-all-domains': cancel,
   }
   vi.stubGlobal('document', {querySelector: (selector: string) => elements[selector]})
   vi.stubGlobal('window', {confirm})
@@ -42,6 +49,10 @@ async function loadPage(): Promise<void> {
 async function change(checked: boolean): Promise<void> {
   toggle.checked = checked
   toggle.addEventListener.mock.calls.find(([event]) => event === 'change')?.[1]()
+  if (checked) {
+    expect(risk.hidden).toBe(false)
+    accept.addEventListener.mock.calls.find(([event]) => event === 'click')?.[1]()
+  }
   await vi.waitFor(() => expect(toggle.disabled).toBe(false))
 }
 
@@ -50,10 +61,10 @@ test('options page defaults off, confirms enabling, and restores whitelist mode 
   expect(toggle.checked).toBe(false)
   expect(domains.value).toBe('example.com')
   await change(true)
-  expect(confirm).toHaveBeenCalledOnce()
+  expect(confirm).not.toHaveBeenCalled()
   expect(store['allowAllDomains.v1']).toBe(true)
   await change(false)
-  expect(confirm).toHaveBeenCalledOnce()
+  expect(confirm).not.toHaveBeenCalled()
   expect(store['allowAllDomains.v1']).toBe(false)
   expect(domains.value).toBe('example.com')
 })
@@ -66,9 +77,12 @@ test('options page restores the persisted switch without prompting', async () =>
 })
 
 test('cancelling risk confirmation leaves the switch off and does not write', async () => {
-  confirm.mockReturnValue(false)
   await loadPage()
-  await change(true)
+  toggle.checked = true
+  toggle.addEventListener.mock.calls.find(([event]) => event === 'change')?.[1]()
+  expect(risk.hidden).toBe(false)
+  cancel.addEventListener.mock.calls.find(([event]) => event === 'click')?.[1]()
+  expect(risk.hidden).toBe(true)
   expect(toggle.checked).toBe(false)
   expect(write).not.toHaveBeenCalled()
 })
