@@ -157,6 +157,18 @@ export const tabNewParams = z.object({
   url: z.string().url().optional(),
 })
 
+/** url 仅用于创建；复用时不导航，避免打断已有页面状态。 */
+export const ensureTabParams = z.object({
+  ...tabIdField,
+  url: z.string().url().optional(),
+})
+
+export const ensureTabResult = z.object({
+  tabId: TAB_ID,
+  url: z.string(),
+  reused: z.boolean(),
+})
+
 export const tabSelectParams = z.object({tabId: TAB_ID})
 
 export const tabCloseParams = z.object({tabId: TAB_ID})
@@ -313,6 +325,7 @@ export const TOOL_NAMES = [
   'screenshot',
   'tab_list',
   'tab_new',
+  'ensure_tab',
   'tab_select',
   'tab_close',
   'takeover_tab',
@@ -327,4 +340,3 @@ export const TOOL_NAMES = [
 ] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]
-

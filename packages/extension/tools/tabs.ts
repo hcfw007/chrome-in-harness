@@ -1,5 +1,5 @@
 /** 标签页管理：list / new / select / close / takeover。tab_new 校验目标 URL、归入 Chrome in Harness 组；close 失效 ref。 */
-import {TOOL_ERROR_CODES} from '@chrome-in-harness/protocol'
+import {TOOL_ERROR_CODES, ensureTabParams} from '@chrome-in-harness/protocol'
 import {refStore} from '../lib/ref-store'
 import {
   GROUP_COLOR,
@@ -72,11 +72,43 @@ export const tabList: ToolHandler = async () => {
 
 export const tabNew: ToolHandler = async (params) => {
   const {url} = params as {url?: string}
+  const created = await createManagedTab(url)
+  return {tabId: created.id}
+}
+
+async function createManagedTab(url: string | undefined): Promise<chrome.tabs.Tab & {id: number}> {
   if (url !== undefined) await authorizeNavigate(url)
   const created = await chrome.tabs.create({url, active: false})
   if (created.id === undefined) throw new Error('created tab has no id')
   await groupTab(created.id, created.windowId)
-  return {tabId: created.id}
+  return {...created, id: created.id}
+}
+
+/** 仅复用 agent 显式传入的标签；不挑选其他 agent 的标签，也不改变焦点或 URL。 */
+export const ensureTab: ToolHandler = async (params) => {
+  const {tabId, url} = ensureTabParams.parse(params)
+  if (tabId !== undefined) {
+    let existing: chrome.tabs.Tab | undefined
+    try {
+      existing = await chrome.tabs.get(tabId)
+    } catch (error) {
+      // 仅 Chrome 的明确「标签不存在」错误允许补建，其他错误必须透传。
+      if (!(error instanceof Error) || !/^No tab with id: \d+\.?$/i.test(error.message)) throw error
+    }
+    if (existing !== undefined) {
+      if (!(await isTabManaged(tabId))) {
+        throw toolError(TOOL_ERROR_CODES.TAB_NOT_MANAGED,
+          `tab ${tabId} is outside the 'Chrome in Harness' group. It was not replaced or taken over; ask the user how to proceed.`)
+      }
+      return {tabId, url: existing.url ?? '', reused: true}
+    }
+  }
+  const created = await createManagedTab(url)
+  if (!(await isTabManaged(created.id))) {
+    throw toolError(TOOL_ERROR_CODES.TAB_NOT_MANAGED,
+      `created tab ${created.id} could not be placed in the managed group; do not retry creation blindly.`)
+  }
+  return {tabId: created.id, url: created.pendingUrl ?? created.url ?? url ?? '', reused: false}
 }
 
 export const tabSelect: ToolHandler = async (params) => {

@@ -8,7 +8,7 @@ import {ping} from './ping'
 import {requestPermission} from './request-permission'
 import {screenshot} from './screenshot'
 import {navigate, snapshot} from './snapshot'
-import {tabClose, tabList, tabNew, tabSelect, takeoverTab} from './tabs'
+import {ensureTab, tabClose, tabList, tabNew, tabSelect, takeoverTab} from './tabs'
 import type {ToolHandler} from './types'
 import {wait} from './wait'
 
@@ -51,6 +51,7 @@ register('scroll', scroll)
 register('screenshot', screenshot)
 register('tab_list', tabList)
 register('tab_new', tabNew)
+register('ensure_tab', ensureTab)
 register('tab_select', tabSelect)
 register('tab_close', tabClose)
 register('takeover_tab', takeoverTab)

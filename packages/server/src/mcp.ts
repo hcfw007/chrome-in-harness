@@ -63,7 +63,11 @@ function createMcpServer(wsBridge: WsBridge): McpServer {
     {
       instructions:
         'Tools that operate on a real Chrome browser via a local extension bridge. ' +
-        'Pages are read via accessibility snapshots with [ref=eN] ids; interactive tools accept those refs.',
+        'Pages are read via accessibility snapshots with [ref=eN] ids; interactive tools accept those refs. ' +
+        'Each agent should call ensure_tab once, save its returned tabId, and explicitly pass that tabId to all subsequent browser operations. ' +
+        'Reuse that same tab via navigate rather than creating new tabs. Call ensure_tab with your saved tabId to recover a closed tab, then save the replacement id. ' +
+        'Do not reuse other agents\' tabs. Create additional tabs only when explicitly needed. ' +
+        'Never switch focus automatically: notify the user when manual interaction is needed, and call tab_select only when explicitly asked.',
     },
   )
   registerAllTools(server, (tool, params) => wsBridge.sendToExtension(tool, params))

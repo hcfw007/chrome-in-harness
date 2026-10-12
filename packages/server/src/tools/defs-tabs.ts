@@ -1,5 +1,7 @@
 /** 标签页管理工具 + ping（自 mcp.ts 迁入）。 */
 import {
+  ensureTabParams,
+  ensureTabResult,
   okResult,
   tabCloseParams,
   tabListParams,
@@ -46,7 +48,7 @@ const tabList = defineTool({
 const tabNew = defineTool({
   name: 'tab_new',
   title: 'Open a new tab',
-  description: 'Open a new tab in the background without changing the active tab, optionally navigating to a URL. Returns the new tab id. If manual interaction is needed, notify the user to switch to it; do not automatically call tab_select.',
+  description: 'Open an additional tab in the background without changing the active tab, optionally navigating to a URL. Prefer ensure_tab to reuse your own tab; use tab_new only when multiple tabs are explicitly needed. Returns the new tab id. If manual interaction is needed, notify the user to switch to it; do not automatically call tab_select.',
   schema: tabNewParams.shape,
   async run(args, call) {
     const raw = await callBridge(call, 'tab_new', args, z.object({tabId: z.number().int()}))
@@ -62,6 +64,17 @@ const tabSelect = defineTool({
   async run(args, call) {
     await callBridge(call, 'tab_select', args, okResult)
     return toolText(`Selected tab ${args.tabId}`)
+  },
+})
+
+const ensureTab = defineTool({
+  name: 'ensure_tab',
+  title: 'Ensure a reusable agent tab',
+  description: 'Reuse your supplied managed tabId, or create a background tab if no tabId is supplied or that tab was closed. Save the returned tabId and explicitly pass it to subsequent browser tools and ensure_tab calls. Each agent must keep its own handle; do not pick another agent\'s tab from tab_list. The optional url is used ONLY when creating, never to navigate a reused tab; use navigate with your tabId to change pages. A tab moved out of the managed group is an error, not permission to replace or take it over. Use tab_new only when multiple tabs are explicitly needed. Never switches focus.',
+  schema: ensureTabParams.shape,
+  async run(args, call) {
+    const result = await callBridge(call, 'ensure_tab', args, ensureTabResult)
+    return toolText(JSON.stringify(result))
   },
 })
 
@@ -91,4 +104,4 @@ const takeoverTab = defineTool({
   },
 })
 
-export const TAB_TOOL_DEFS: readonly ToolDef[] = [ping, tabList, tabNew, tabSelect, tabClose, takeoverTab]
+export const TAB_TOOL_DEFS: readonly ToolDef[] = [ping, tabList, tabNew, tabSelect, tabClose, takeoverTab, ensureTab]
