@@ -14,6 +14,8 @@
       #status.err { color: #c0392b; }
       .risk { border: 1px solid #c0392b; padding: .75rem; margin-bottom: 1rem; }
       .risk p { margin-bottom: 0; color: #9c2f24; }
+      #risk-confirmation { border: 2px solid #c0392b; padding: 1rem; margin: 1rem 0; }
+      #risk-message { white-space: pre-line; }
     </style>
   </head>
   <body>
@@ -23,6 +25,12 @@
       <p>使用真实登录状态，可能读取敏感页面或提交真实数据。仅建议在专用测试浏览器配置中开启；开启前需确认风险。</p>
       <p id="mode-status" role="status">正在加载访问模式…</p>
     </section>
+    <div id="risk-confirmation" hidden role="region" aria-labelledby="risk-title">
+      <h2 id="risk-title">确认开启全域访问</h2>
+      <p id="risk-message"></p>
+      <button id="cancel-all-domains" type="button">取消</button>
+      <button id="confirm-all-domains" type="button">我了解风险，开启</button>
+    </div>
     <p class="hint">每行一个域名。规则 example.com 匹配自身与任意深度子域。访问未在名单内的域名时会自动弹出确认窗口让用户选择；本页用于预置或批量维护名单。</p>
     <textarea id="domains" placeholder="example.com&#10;wikipedia.org"></textarea>
     <button id="save">保存</button>

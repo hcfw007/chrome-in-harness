@@ -7,6 +7,27 @@ const button = document.querySelector<HTMLButtonElement>('#save')
 const status = document.querySelector<HTMLDivElement>('#status')
 const allDomains = document.querySelector<HTMLInputElement>('#all-domains')
 const modeStatus = document.querySelector<HTMLParagraphElement>('#mode-status')
+const riskConfirmation = document.querySelector<HTMLDivElement>('#risk-confirmation')
+const riskMessage = document.querySelector<HTMLParagraphElement>('#risk-message')
+const confirmButton = document.querySelector<HTMLButtonElement>('#confirm-all-domains')
+const cancelButton = document.querySelector<HTMLButtonElement>('#cancel-all-domains')
+let resolveConfirmation: ((confirmed: boolean) => void) | undefined
+
+function requestRiskConfirmation(message: string): Promise<boolean> {
+  if (riskConfirmation === null || riskMessage === null || confirmButton === null || cancelButton === null) {
+    throw new Error('风险确认面板缺失，请刷新扩展选项页。')
+  }
+  riskMessage.textContent = message
+  riskConfirmation.hidden = false
+  cancelButton.focus()
+  return new Promise((resolve) => {resolveConfirmation = resolve})
+}
+
+function finishConfirmation(confirmed: boolean): void {
+  if (riskConfirmation !== null) riskConfirmation.hidden = true
+  resolveConfirmation?.(confirmed)
+  resolveConfirmation = undefined
+}
 
 function renderMode(enabled: boolean): void {
   if (allDomains !== null) allDomains.checked = enabled
@@ -33,7 +54,7 @@ async function changeMode(): Promise<void> {
   const enabled = allDomains.checked
   allDomains.disabled = true
   try {
-    renderMode(await confirmAllDomainsAccess(enabled, (message) => window.confirm(message)))
+    renderMode(await confirmAllDomainsAccess(enabled, requestRiskConfirmation))
     showStatus(allDomains.checked ? '已开启全域访问（高风险）' : '保持白名单模式', true)
   } catch (error) {
     renderMode(!enabled)
@@ -58,3 +79,5 @@ button?.addEventListener('click', () => {
   void save().catch((error: unknown) => showStatus(`保存失败：${String(error)}`, false))
 })
 allDomains?.addEventListener('change', () => void changeMode())
+confirmButton?.addEventListener('click', () => finishConfirmation(true))
+cancelButton?.addEventListener('click', () => finishConfirmation(false))

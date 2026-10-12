@@ -2,7 +2,7 @@ import {afterEach, beforeEach, expect, test, vi} from 'vitest'
 
 function element() {
   return {checked: false, disabled: true, value: '', textContent: '', className: '',
-    addEventListener: vi.fn<(event: string, listener: () => void) => void>(),
+    addEventListener: vi.fn<(event: string, listener: () => void) => void>(), focus: vi.fn(),
   }
 }
 
@@ -31,6 +31,7 @@ beforeEach(async () => {
     '#all-domains': toggle, '#status': status, '#domains': domains,
     '#save': element(), '#mode-status': element(),
     '#risk-confirmation': risk, '#confirm-all-domains': accept, '#cancel-all-domains': cancel,
+    '#risk-message': element(),
   }
   vi.stubGlobal('document', {querySelector: (selector: string) => elements[selector]})
   vi.stubGlobal('window', {confirm})
@@ -83,6 +84,7 @@ test('cancelling risk confirmation leaves the switch off and does not write', as
   expect(risk.hidden).toBe(false)
   cancel.addEventListener.mock.calls.find(([event]) => event === 'click')?.[1]()
   expect(risk.hidden).toBe(true)
+  await vi.waitFor(() => expect(toggle.disabled).toBe(false))
   expect(toggle.checked).toBe(false)
   expect(write).not.toHaveBeenCalled()
 })
