@@ -140,6 +140,16 @@ describe('takeover_tab 生命周期语义', () => {
 })
 
 describe('tab_new 组边界与白名单', () => {
+  test.each([undefined, 'https://project.feishu.cn/x'])('new opens in the background without activating tabs: %s', async (url) => {
+    getAllowlist.mockResolvedValue(['feishu.cn'])
+    const create = vi.fn(async () => ({id: 9001, windowId: 1}))
+    const update = vi.fn(async () => ({id: 9001, active: true}))
+    installChrome({create, update})
+    await expect(tabNew({url} as never)).resolves.toEqual({tabId: 9001})
+    expect(create).toHaveBeenCalledWith({url, active: false})
+    expect(update).not.toHaveBeenCalled()
+  })
+
   test('new triggers domain confirmation for unlisted URLs,不用建 tab', async () => {
     getAllowlist.mockResolvedValue(['feishu.cn'])
     const create = vi.fn(async () => ({id: 1, windowId: 1}))
