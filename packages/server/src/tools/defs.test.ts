@@ -245,6 +245,12 @@ describe('tab defs', () => {
     expect(content).toEqual([{type: 'text', text: 'Opened tab 9 at https://example.com'}])
   })
 
+  test('tab tools instruct agents to preserve focus unless explicitly requested', () => {
+    expect(byName('tab_new').description).toContain('background')
+    expect(byName('tab_select').description).toContain('explicitly asks')
+    expect(byName('tab_select').description).toContain('notify the user')
+  })
+
   test('takeover_tab confirms the tab is managed', async () => {
     const fake = fakeBridge({tabId: 4, url: 'https://leetcode.com/problems/two-sum/'})
     const content = await run(byName('takeover_tab'), {tabId: 4}, fake.call)
