@@ -73,7 +73,7 @@ export const tabList: ToolHandler = async () => {
 export const tabNew: ToolHandler = async (params) => {
   const {url} = params as {url?: string}
   if (url !== undefined) await authorizeNavigate(url)
-  const created = await chrome.tabs.create({url, active: true})
+  const created = await chrome.tabs.create({url, active: false})
   if (created.id === undefined) throw new Error('created tab has no id')
   await groupTab(created.id, created.windowId)
   return {tabId: created.id}

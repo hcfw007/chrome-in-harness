@@ -46,7 +46,7 @@ const tabList = defineTool({
 const tabNew = defineTool({
   name: 'tab_new',
   title: 'Open a new tab',
-  description: 'Open a new tab, optionally navigating to a URL. Returns the new tab id.',
+  description: 'Open a new tab in the background without changing the active tab, optionally navigating to a URL. Returns the new tab id. If manual interaction is needed, notify the user to switch to it; do not automatically call tab_select.',
   schema: tabNewParams.shape,
   async run(args, call) {
     const raw = await callBridge(call, 'tab_new', args, z.object({tabId: z.number().int()}))
@@ -57,7 +57,7 @@ const tabNew = defineTool({
 const tabSelect = defineTool({
   name: 'tab_select',
   title: 'Select a tab',
-  description: 'Bring the tab with the given id to the front.',
+  description: 'Bring the tab with the given id to the front. Only call when the user explicitly asks you to switch tabs. For login, verification, or manual review, notify the user to switch themselves instead; do not automatically select a tab.',
   schema: tabSelectParams.shape,
   async run(args, call) {
     await callBridge(call, 'tab_select', args, okResult)
