@@ -1,5 +1,6 @@
 /** 把全部工具注册进 McpServer：统一的错误路径与 schema 装配。 */
 import type {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js'
+import {BATCH_TOOL_DEFS} from './defs-batch.js'
 import {BROWSER_TOOL_DEFS} from './defs-browser.js'
 import {DEBUG_TOOL_DEFS} from './defs-debug.js'
 import {EVALUATE_TOOL_DEFS} from './defs-evaluate.js'
@@ -9,6 +10,7 @@ import type {BridgeCall, ToolContent, ToolDef} from './types.js'
 
 const ALL_TOOL_DEFS: readonly ToolDef[] = [
   ...TAB_TOOL_DEFS,
+  ...BATCH_TOOL_DEFS,
   ...BROWSER_TOOL_DEFS,
   ...DEBUG_TOOL_DEFS,
   ...EVALUATE_TOOL_DEFS,

@@ -337,6 +337,44 @@ export const TOOL_NAMES = [
   'request_permission',
   'click_at',
   'get_text',
+  'run_actions',
 ] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]
+
+/**
+ * `run_actions` 允许的步骤工具：排除自身（防无界递归）与 `screenshot`
+ * （二进制结果不适合塞进批量文本，应单独调用）。两端共用，避免漂移。
+ */
+export const ACTION_STEP_TOOLS = TOOL_NAMES.filter(
+  (name) => name !== 'run_actions' && name !== 'screenshot',
+)
+
+export const actionStepSchema = z.object({
+  tool: z.enum(ACTION_STEP_TOOLS as unknown as [ToolName, ...ToolName[]]),
+  params: z.record(z.string(), z.unknown()).optional(),
+})
+
+/**
+ * 批量执行：一次 MCP 调用按顺序跑多个工具，减少往返（如连续 press_key）。
+ * 步骤逐个执行，后续步骤能看到前序造成的页面变化。
+ */
+export const runActionsParams = z.object({
+  ...tabIdField,
+  /** 有序步骤，最多 50 步。 */
+  actions: z.array(actionStepSchema).min(1).max(50),
+  /** true 时单步失败继续；默认在首个失败处停止。 */
+  continueOnError: z.boolean().optional(),
+})
+
+export const runActionsResult = z.object({
+  steps: z.array(
+    z.object({
+      index: z.number().int().min(0),
+      tool: z.string(),
+      ok: z.boolean(),
+      result: z.unknown().optional(),
+      error: z.string().optional(),
+    }),
+  ),
+})

@@ -125,6 +125,10 @@ agent 应优先使用 `ensure_tab`，保存返回的 `{tabId, url, reused}`，�
 `url` 仅用于创建，复用后需要换页面应调用 `navigate`。标签被用户移出受管组会报错，不自动接管或补建。
 不同 agent 各自维护标签 ID，只有明确需要多标签时才使用 `tab_new`；服务不提供 agent 身份识别或独占锁。
 
+重复性的连续操作（如逐字符 `press_key` 输入）可用 `run_actions` 在**一次调用**里批量执行：
+传 `actions: [{tool, params}, ...]`，顶层 `tabId` 会注入未自带 `tabId` 的步骤。步骤按顺序执行、后续步骤能看到前序结果；
+默认在首个失败处停止，`continueOnError: true` 则继续并保留每步错误。单次最多 50 步，禁止嵌套 `run_actions`，也不支持在批量里调用 `screenshot`。
+
 ### 域名访问模式
 
 默认按域名白名单限制访问。扩展选项页提供「允许所有域名」开关，默认关闭，开启前需确认风险。

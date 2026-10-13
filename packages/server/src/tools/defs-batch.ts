@@ -15,7 +15,12 @@ function summarize(result: unknown): string {
 const runActions = defineTool({
   name: 'run_actions',
   title: 'Run a sequence of browser actions',
-  description: '',
+  description:
+    'Execute an ordered list of tool calls in a single request to cut round trips, e.g. ' +
+    '[{tool:"press_key",params:{key:"c"}}, {tool:"press_key",params:{key:"o"}}, ...]. ' +
+    'Steps run sequentially and later steps observe earlier page changes. A top-level tabId is applied to steps that omit their own. ' +
+    'Stops at the first failed step unless continueOnError is true (max 50 steps). ' +
+    'Nesting run_actions and using screenshot inside a batch are rejected. Returns one line per step.',
   schema: runActionsParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'run_actions', args, runActionsResult)

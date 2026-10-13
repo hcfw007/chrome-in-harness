@@ -67,7 +67,8 @@ function createMcpServer(wsBridge: WsBridge): McpServer {
         'Each agent should call ensure_tab once, save its returned tabId, and explicitly pass that tabId to all subsequent browser operations. ' +
         'Reuse that same tab via navigate rather than creating new tabs. Call ensure_tab with your saved tabId to recover a closed tab, then save the replacement id. ' +
         'Do not reuse other agents\' tabs. Create additional tabs only when explicitly needed. ' +
-        'Never switch focus automatically: notify the user when manual interaction is needed, and call tab_select only when explicitly asked.',
+        'Never switch focus automatically: notify the user when manual interaction is needed, and call tab_select only when explicitly asked. ' +
+        'For repetitive sequences (for example typing a string with press_key), prefer run_actions to batch them in one request.',
     },
   )
   registerAllTools(server, (tool, params) => wsBridge.sendToExtension(tool, params))
