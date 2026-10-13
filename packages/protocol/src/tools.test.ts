@@ -1,5 +1,6 @@
 import {describe, expect, test} from 'vitest'
 import {
+  ACTION_STEP_TOOLS,
   TOOL_ERROR_CODES,
   TOOL_NAMES,
   addAllowlistDomainParams,
@@ -13,6 +14,8 @@ import {
   pressKeyParams,
   readConsoleParams,
   readNetworkParams,
+  runActionsParams,
+  runActionsResult,
   scrollParams,
   snapshotParams,
   snapshotResult,
@@ -30,6 +33,35 @@ describe('TOOL_ERROR_CODES', () => {
     expect(TOOL_ERROR_CODES.SCRIPT_REJECTED).toBe('SCRIPT_REJECTED')
     expect(TOOL_ERROR_CODES.SCRIPT_ERROR).toBe('SCRIPT_ERROR')
     expect(TOOL_ERROR_CODES.SCRIPT_ERROR).not.toBe(TOOL_ERROR_CODES.SCRIPT_REJECTED)
+  })
+
+  test('run_actions is a tool name and is excluded from its own step list', () => {
+    expect(TOOL_NAMES).toContain('run_actions')
+    expect(ACTION_STEP_TOOLS).not.toContain('run_actions')
+    expect(ACTION_STEP_TOOLS).not.toContain('screenshot')
+    expect(ACTION_STEP_TOOLS).toContain('press_key')
+  })
+
+  test('run_actions caps step count and rejects nested or unknown tools', () => {
+    expect(runActionsParams.safeParse({actions: [{tool: 'press_key', params: {key: 'a'}}]}).success).toBe(true)
+    expect(runActionsParams.safeParse({tabId: 7, continueOnError: true, actions: [{tool: 'type'}]}).success).toBe(true)
+    expect(runActionsParams.safeParse({actions: []}).success).toBe(false)
+    expect(runActionsParams.safeParse({actions: [{tool: 'run_actions'}]}).success).toBe(false)
+    expect(runActionsParams.safeParse({actions: [{tool: 'screenshot'}]}).success).toBe(false)
+    expect(runActionsParams.safeParse({actions: [{tool: 'nope'}]}).success).toBe(false)
+    const tooMany = Array.from({length: 51}, () => ({tool: 'press_key'}))
+    expect(runActionsParams.safeParse({actions: tooMany}).success).toBe(false)
+  })
+
+  test('run_actions result carries per-step status', () => {
+    const parsed = runActionsResult.safeParse({
+      steps: [
+        {index: 0, tool: 'press_key', ok: true, result: {}},
+        {index: 1, tool: 'press_key', ok: false, error: 'KEY_PIPELINE_DEAD: x'},
+      ],
+    })
+    expect(parsed.success).toBe(true)
+    expect(runActionsResult.safeParse({steps: [{index: 0, tool: 'press_key'}]}).success).toBe(false)
   })
 })
 

@@ -1,4 +1,5 @@
 import {describe, expect, test} from 'vitest'
+import {BATCH_TOOL_DEFS} from './defs-batch.js'
 import {BROWSER_TOOL_DEFS} from './defs-browser.js'
 import {DEBUG_TOOL_DEFS} from './defs-debug.js'
 import {EVALUATE_TOOL_DEFS} from './defs-evaluate.js'
@@ -21,7 +22,7 @@ async function run(def: ToolDef, args: unknown, call: BridgeCall) {
   return def.run(args, call)
 }
 
-const ALL = [...TAB_TOOL_DEFS, ...BROWSER_TOOL_DEFS, ...DEBUG_TOOL_DEFS, ...EVALUATE_TOOL_DEFS]
+const ALL = [...TAB_TOOL_DEFS, ...BATCH_TOOL_DEFS, ...BROWSER_TOOL_DEFS, ...DEBUG_TOOL_DEFS, ...EVALUATE_TOOL_DEFS]
 
 function byName(name: string): ToolDef {
   const def = ALL.find((d) => d.name === name)
@@ -33,6 +34,25 @@ describe('tool name uniqueness', () => {
   test('every tool has a unique name', () => {
     const names = ALL.map((d) => d.name)
     expect(new Set(names).size).toBe(names.length)
+  })
+})
+
+describe('run_actions def', () => {
+  test('forwards the batch and renders per-step status', async () => {
+    const fake = fakeBridge({
+      steps: [
+        {index: 0, tool: 'press_key', ok: true, result: {}},
+        {index: 1, tool: 'navigate', ok: true, result: {url: 'https://example.com', loaded: true}},
+        {index: 2, tool: 'press_key', ok: false, error: 'KEY_PIPELINE_DEAD: dead'},
+      ],
+    })
+    const args = {tabId: 7, actions: [{tool: 'press_key', params: {key: 'a'}}]}
+    const content = await run(byName('run_actions'), args, fake.call)
+    expect(fake.received[0]).toEqual({tool: 'run_actions', params: args})
+    const text = (content[0] as {text: string}).text
+    expect(text).toContain('1. press_key ok')
+    expect(text).toContain('2. navigate ok — {"url":"https://example.com","loaded":true}')
+    expect(text).toContain('3. press_key failed: KEY_PIPELINE_DEAD: dead')
   })
 })
 
