@@ -1,3 +1,4 @@
+import {TOOL_NAMES} from '@chrome-in-harness/protocol'
 import {describe, expect, test} from 'vitest'
 import {BATCH_TOOL_DEFS} from './defs-batch.js'
 import {BROWSER_TOOL_DEFS} from './defs-browser.js'
@@ -34,6 +35,10 @@ describe('tool name uniqueness', () => {
   test('every tool has a unique name', () => {
     const names = ALL.map((d) => d.name)
     expect(new Set(names).size).toBe(names.length)
+  })
+
+  test('server exposes exactly the shared tool name contract (no dropped tools)', () => {
+    expect([...ALL].map((def) => def.name).sort()).toEqual([...TOOL_NAMES].sort())
   })
 })
 
