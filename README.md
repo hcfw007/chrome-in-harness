@@ -1,5 +1,7 @@
 # chrome-in-harness
 
+**中文** | [English](README.en.md)
+
 Claude-in-Chrome 风格的开源浏览器 MCP：通过 Chrome 扩展，让支持 MCP 的 AI 客户端（OpenCode / Claude Code 等）操作你**真实的 Chrome profile**，复用已有登录态、cookie 和插件环境，无需另起 headless 浏览器或重新登录。
 
 > **便利优先，强烈建议只在测试环境使用。**
@@ -33,7 +35,14 @@ Chrome 扩展 · MV3 service worker / WXT
 真实 Chrome profile 中的受管标签页
 ```
 
-四个包：`@chrome-in-harness/protocol`（两端共用的 WS 协议定义、zod schema 与类型守卫）、`@chrome-in-harness/server`（WS 桥 + MCP 端点）、`@chrome-in-harness/extension`（MV3 扩展）、`@chrome-in-harness/launcher`（`chrome-in-harness` CLI）。
+四个包（每个子包都有自己的 README，含更详细的架构说明）：
+
+| 包 | README |
+| --- | --- |
+| `@chrome-in-harness/protocol` | [packages/protocol/README.md](packages/protocol/README.md) |
+| `@chrome-in-harness/server` | [packages/server/README.md](packages/server/README.md) |
+| `@chrome-in-harness/extension` | [packages/extension/README.md](packages/extension/README.md) |
+| `@chrome-in-harness/launcher` | [packages/launcher/README.md](packages/launcher/README.md) |
 
 - 扩展 service worker 作为 WS **client** 主动连 `ws://127.0.0.1:8765`（无需 Chrome 额外暴露端口，连接由扩展发起）
 - server 在 `http://127.0.0.1:12306/mcp` 暴露 MCP（Streamable HTTP，无状态模式）；收到 tool call 后通过 WS 转发给扩展，按消息 `id` 关联等待响应，超时 30s
