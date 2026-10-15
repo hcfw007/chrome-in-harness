@@ -1,6 +1,6 @@
 {
   "name": "@chrome-in-harness/server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -26,7 +26,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@chrome-in-harness/protocol": "^0.1.0",
+    "@chrome-in-harness/protocol": "^0.2.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "ws": "^8.18.3",
     "zod": "^3.25.76"
