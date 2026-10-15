@@ -1,5 +1,10 @@
 # chrome-in-harness
 
+[![CI](https://github.com/hcfw007/chrome-in-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/hcfw007/chrome-in-harness/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@chrome-in-harness/launcher)](https://www.npmjs.com/package/@chrome-in-harness/launcher)
+[![Node](https://img.shields.io/node/v/@chrome-in-harness/launcher)](https://www.npmjs.com/package/@chrome-in-harness/launcher)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
 **中文** | [English](README.en.md)
 
 Claude-in-Chrome 风格的开源浏览器 MCP：通过 Chrome 扩展，让支持 MCP 的 AI 客户端（OpenCode / Claude Code 等）操作你**真实的 Chrome profile**，复用已有登录态、cookie 和插件环境，无需另起 headless 浏览器或重新登录。

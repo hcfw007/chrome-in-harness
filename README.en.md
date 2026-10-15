@@ -1,5 +1,10 @@
 # chrome-in-harness
 
+[![CI](https://github.com/hcfw007/chrome-in-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/hcfw007/chrome-in-harness/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@chrome-in-harness/launcher)](https://www.npmjs.com/package/@chrome-in-harness/launcher)
+[![Node](https://img.shields.io/node/v/@chrome-in-harness/launcher)](https://www.npmjs.com/package/@chrome-in-harness/launcher)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
 **English** | [中文](README.md)
 
 An open-source, Claude-in-Chrome-style browser MCP: through a Chrome extension, any MCP-capable AI client (OpenCode / Claude Code / …) can operate your **real Chrome profile** — reusing existing logins, cookies, and extensions, with no headless browser and no re-login.
