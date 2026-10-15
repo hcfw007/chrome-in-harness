@@ -89,14 +89,6 @@ These limits do not defend against local malicious processes: the MCP endpoint h
 - **Accepted cost**: the "being debugged" banner shows while attached; opening DevTools on a controlled tab displaces the session (`DEBUGGER_BUSY`) and it recovers when DevTools closes.
 - **Background operation (automatic, no focus stealing)**: CDP `Input.*` is silently dropped on background tabs; input tools enable `Emulation.setFocusEmulationEnabled` first (same as Playwright / Claude-in-Chrome) so background tabs receive input **without activating the tab or interrupting you**; falls back to activation when emulation is unavailable; minimized windows are restored and focused, with `WINDOW_NOT_INTERACTIVE` on failure.
 
-### Field-tested tips (SPA / LeetCode-style sites)
-
-- **Writing solutions**: `type mode="set"` writes the whole buffer in one step — more stable and faster than click → Ctrl+A → type; collapsed layouts are detected and recovered automatically (observable via `layoutRecovered:true`); submit by clicking the Run/Submit button ref.
-- **Hydration races**: clicks right after load get silently swallowed on React sites (handlers not yet wired) — `wait` for an app-level marker after `navigate` before the first click.
-- **Ground-truth verdicts**: LeetCode 2026 UI jumps to `/submissions/detail/<id>/` whose result panel often never renders (especially for non-AC); the only reliable oracle is navigating straight to `/submissions/detail/<id>/v2/check/` for the JSON (same origin, so allowlisted).
-- **707 / rejection triage**: get the submission id from the URL or page, then `navigate` to `/submissions/detail/<id>/v2/check/` and read `ai_judge_message`. `read_network(urlFilter:"submit")` only helps check request status — response bodies can't be read.
-- **AC detection**: `wait(text:"Accepted")` has false positives (the stats block permanently shows "Accepted 2.3M/4M"); `wait(text:"Beats")` is the AC-only signal; use `wait(text:"Runtime")` for Run results.
-
 ## Installation & running
 
 Four steps overall: **① start the local server → ② install the Chrome extension → ③ register your MCP client → ④ verify**. The extension is **not on the Chrome Web Store** — step ② is a manual load, so follow it carefully.

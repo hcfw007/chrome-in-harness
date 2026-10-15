@@ -89,14 +89,6 @@ Chrome 扩展 · MV3 service worker / WXT
 - **代价（已接受）**：attach 期间 Chrome 显示「正在调试」黄条；目标 tab 打开 DevTools 会顶掉扩展会话，工具报 `DEBUGGER_BUSY`，关闭 DevTools 后自动恢复
 - **后台操作（自动处理，不抢前台）**：CDP `Input.*` 在后台 tab 上会被静默丢弃；输入类工具派发前开 `Emulation.setFocusEmulationEnabled` 焦点仿真（Playwright / Claude-in-Chrome 同款），让后台 tab 直接接收输入，**不激活 tab、不打断用户当前视图**；仿真不可用时回退激活 tab；窗口最小化时自动恢复并聚焦，恢复失败报 `WINDOW_NOT_INTERACTIVE`
 
-### 实战技巧（SPA / LeetCode 类站点，实测沉淀）
-
-- **写解法**：`type mode="set"` 一步全量写盘，比 click → Ctrl+A → type 更稳更快；写入前自动检测并恢复塌缩布局（返回 `layoutRecovered:true` 可观测），无需再手动 rect 预检 + layout()；提交用 Run/Submit 按钮 ref 点击
-- **水合竞态**：React 站点刚加载完时点击会被静默吞掉（handler 尚未接线）——`navigate` 后先 `wait`（app 级 marker）再首次点击
-- **verdict 真值**：LeetCode 2026 UI 提交后自动跳转 `/submissions/detail/<id>/`，结果面板经常不渲染（非 AC 尤甚）；唯一可靠 oracle 是直接 `navigate` 到 `/submissions/detail/<id>/v2/check/` 读 JSON（同源即在白名单内）
-- **707/被拒诊断**：从提交后的 URL 或页面获取 submission id，再 `navigate` 到 `/submissions/detail/<id>/v2/check/` 查看 `ai_judge_message`。`read_network(urlFilter:"submit")` 只能辅助检查请求状态，不能读取提交响应体
-- **AC 判定**：`wait(text:"Accepted")` 有假阳性（题目统计区常驻 "Accepted 2.3M/4M" 字样）；`wait(text:"Beats")` 才是 AC-only 信号，Run 结果用 `wait(text:"Runtime")`
-
 ## 安装与运行
 
 整体分四步：**① 启动本地 server → ② 安装 Chrome 扩展 → ③ 注册 MCP 客户端 → ④ 验证**。扩展**没有上架 Chrome Web Store**，第 ② 步需要手动加载，请仔细按流程操作。
