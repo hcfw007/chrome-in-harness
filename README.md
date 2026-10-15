@@ -11,9 +11,11 @@ Claude-in-Chrome 风格的开源浏览器 MCP：通过 Chrome 扩展，让支持
 - **看页面**：读取可访问性树快照、元素文本和截图，使用带版本的 ref 定位元素。
 - **操作页面**：导航、点击、悬停、滚动、文本输入和快捷键；iframe / Canvas 等无法通过 ref 命中的目标可用坐标点击。
 - **编辑代码**：支持保留多行缩进的输入，以及通过页面暴露的 Monaco API 全量写入编辑器；包含键盘通路检测和编辑器塌缩恢复。
-- **管理标签页**：创建、切换、关闭标签页，或显式接管已有标签页；操作限定在 “Chrome in Harness” 受管组内。
+- **管理标签页**：创建、切换、关闭标签页，或显式接管已有标签页；操作限定在 "Chrome in Harness" 受管组内。
+- **标签页会话**：`ensure_tab` 提供可复用的标签句柄——每个 agent 固定用自己的标签，标签被关自动补建，避免标签越开越多。
+- **批量执行**：`run_actions` 一次调用按顺序执行多个工具（如逐字符输入、点击序列），减少 MCP 往返。
 - **等待与排查**：等待文本、选择器、URL 或编辑器就绪，读取控制台消息及网络请求元数据，执行受限页面 JS 表达式。
-- **减少操作打扰**：优先通过焦点仿真在后台标签页执行输入；恢复失败时可能激活标签页或窗口。
+- **不打扰浏览**：新标签一律后台打开不抢焦点；输入通过焦点仿真在后台标签执行；需要人工操作（登录、验证码）时 agent 会提示你自行切换。
 
 ## 架构
 
@@ -47,7 +49,7 @@ Chrome 扩展 · MV3 service worker / WXT
 
 - **WS 握手校验 Origin**：只接受 `chrome-extension://` 来源。浏览器强制写入 Origin 且页面无法伪造，因此恶意网页无法连上 `127.0.0.1:8765` 顶掉真扩展并接管 tool call。设 `CIC_EXTENSION_ID` 可进一步锁定到具体扩展 ID
 - **MCP 端点开启 DNS rebinding 防护**：强制校验 Host 为 `127.0.0.1:12306` / `localhost:12306`；Origin 存在时一并校验（浏览器页面会被拒，非浏览器 MCP 客户端正常放行）
-- **标签页与域名边界**：浏览器执行前检查受管组和域名白名单；新域名默认弹出确认窗口。`add_allowlist_domain` 可直接写入白名单，其“仅在用户明确要求时使用”依赖客户端 / agent 遵守工具说明。
+- **标签页与域名边界**：浏览器执行前检查受管组和域名白名单；新域名默认弹出确认窗口。`add_allowlist_domain` 可直接写入白名单，其"仅在用户明确要求时使用"依赖客户端 / agent 遵守工具说明。
 - **受限脚本**：`evaluate_script` 使用黑名单和表达式形态检查，限制常见网络、导航和动态执行 API；这是减少误用的护栏，不是 JS 沙箱，也不保证所有页面表达式无副作用。
 - 扩展权限按需申请：`alarms`（SW keepalive）、`tabs` + `tabGroups`（tab 管理 / 受管组边界 / URL 变化失效 ref）、`storage`（域名白名单持久化）、`debugger`（CDP 会话，仅在 attach 时出现「正在调试」黄条）、`permissions`（`request_permission` 弹窗授权）；host permission 仅 loopback `127.0.0.1:8765`，运行时通过 `optional_host_permissions` 白名单授权目标站
 
@@ -55,7 +57,7 @@ Chrome 扩展 · MV3 service worker / WXT
 
 ## 工具与行为细节
 
-**工具集**（22 个）：`ping`、`navigate`、`snapshot`、`click`、`click_at`、`hover`、`type`、`press_key`、`get_text`、`scroll`、`screenshot`、`tab_list`、`tab_new`、`tab_select`、`tab_close`、`takeover_tab`、`read_console`、`read_network`、`wait`、`add_allowlist_domain`、`evaluate_script`、`request_permission`。
+**工具集**（24 个）：`ping`、`navigate`、`snapshot`、`click`、`click_at`、`hover`、`type`、`press_key`、`get_text`、`scroll`、`screenshot`、`tab_list`、`tab_new`、`ensure_tab`、`tab_select`、`tab_close`、`takeover_tab`、`run_actions`、`read_console`、`read_network`、`wait`、`add_allowlist_domain`、`evaluate_script`、`request_permission`。
 
 - **read_console / read_network**：CDP 采集的 console 与网络请求元数据（响应体不采集）。缓冲从 tab 首次被工具 attach 起积累
 - **wait**：等待文本 / CSS 选择器 / URL 子串出现（页面内 Promise 轮询，默认 8s 上限 30s），超时返回 `{matched:false}` 而非报错
@@ -63,6 +65,7 @@ Chrome 扩展 · MV3 service worker / WXT
 - **evaluate_script**：受限 `Runtime.evaluate` 执行页面上下文 JS。黑名单拒绝网络访问（fetch/XHR/WebSocket/sendBeacon）、eval/Function、导航（location/window.open）、document.write、debugger 与 `chrome.*`；`awaitPromise:true` 需 async IIFE；结果 JSON 序列化超限截断
 - **request_permission**：针对域名发起 `chrome.permissions.request` 原生授权弹窗，授予后同步写入 storage 白名单。仅当用户明确要求时调用
 - **takeover_tab**：把已打开的用户 tab 收编进受管组（`tab_list` 标 `[managed:<groupId>]` 便于识别）；仅在用户明确要求在该 tab 工作时调用，URL 必须已在白名单
+- **ensure_tab / run_actions**：见下文[标签页使用约定](#标签页使用约定)与[批量执行](#批量执行)
 
 - **snapshot**：`chrome.debugger` + CDP `Accessibility.getFullAXTree`，渲染成 Playwright ariaSnapshot 风格的缩进文本，交互元素带 `[ref=eN-<token>]`；优先用 ref 交互，减少选择器漂移。坐标点击、当前焦点输入等场景可不使用 ref
 - **ref 生命周期**：ref 绑定 tab 的最近一次快照，格式 `e<N>-<token>`（token 编码 worker 代 + 快照版本）；导航/关 tab/debugger 分离即失效；跨 worker 代或过期一律显式 `STALE_REF`（拒绝静默错点）；同代快照更替时交互工具按元素身份自动重试一次；SW 被杀后报 `NO_SNAPSHOT` 引导重新 snapshot
@@ -85,38 +88,96 @@ Chrome 扩展 · MV3 service worker / WXT
 - **707/被拒诊断**：从提交后的 URL 或页面获取 submission id，再 `navigate` 到 `/submissions/detail/<id>/v2/check/` 查看 `ai_judge_message`。`read_network(urlFilter:"submit")` 只能辅助检查请求状态，不能读取提交响应体
 - **AC 判定**：`wait(text:"Accepted")` 有假阳性（题目统计区常驻 "Accepted 2.3M/4M" 字样）；`wait(text:"Beats")` 才是 AC-only 信号，Run 结果用 `wait(text:"Runtime")`
 
-## 安装与使用
+## 安装与运行
 
-两种方式：**npm 快速安装**（推荐）或 **GitHub Release / 源码**。
+整体分四步：**① 启动本地 server → ② 安装 Chrome 扩展 → ③ 注册 MCP 客户端 → ④ 验证**。扩展**没有上架 Chrome Web Store**，第 ② 步需要手动加载，请仔细按流程操作。
 
-> **MCP 升级后必须重启客户端会话**：opencode / Claude Code 等客户端在会话启动时注册工具 schema，
-> 运行中不会随服务端 `tools/list` 变化热更新（不监听 `tools/list_changed`）。服务端升级新参数/新工具后，
-> 老会话仍按旧 schema 校验并拦截新参数——重启会话即可。ref 格式同样注意：快照 ref 带 token
-> 后缀（如 `e3-a7k2`），跨会话/跨 worker 重启的旧 ref 会被显式拒绝（`STALE_REF`），重新 snapshot 即可。
+### 前置要求
 
-### npm 快速安装
+- Node.js ≥ 20（推荐 22）
+- Chrome / Chromium 系浏览器
+- 强烈建议使用**专用测试 Chrome profile**（Chrome → 右上角头像 → 添加新用户），与日常浏览隔离
+
+### 第 ① 步：启动本地 server
 
 ```bash
-# 1. 启动本地 server 并自动写入 OpenCode 全局配置
 npx @chrome-in-harness/launcher start
+```
 
-# 2. 装扩展：Chrome 打开 chrome://extensions → 开发者模式 → 加载已解压的扩展程序
-#    选择 GitHub Releases 下载的 chrome-in-harness-extension.zip 解压目录，
-#    或本仓库 packages/extension/.output/chrome-mv3
+这一条命令会：
 
-# 3. 自检全链路
+- 检测 server 是否已在运行（已运行则直接复用）
+- 启动本地 server（WS `127.0.0.1:8765` ↔ MCP `http://127.0.0.1:12306/mcp`）
+- 自动向 `~/.config/opencode/opencode.json` 写入 `chrome-in-harness` 的 remote MCP 条目（已有同名条目会保留；配置文件无法读取或非法时会报错退出，不覆盖原文件）
+
+`start` 是**前台进程**，关掉终端即停止。如需长期在线，见下文[常驻服务](#常驻服务可选)。
+
+### 第 ② 步：安装 Chrome 扩展（手动加载）
+
+> 扩展未上架 Chrome Web Store，需以"开发者模式 + 加载已解压的扩展程序"方式安装。扩展来源二选一：
+
+**方式 A：GitHub Releases 下载 zip（推荐使用者）**
+
+1. 到 [Releases 页面](https://github.com/hcfw007/chrome-in-harness/releases) 下载 `chrome-in-harness-extension.zip`
+2. **解压到一个长期保留的固定目录**（例如 `~/chrome-in-harness-extension`）。注意：解压目录不能删除或移动，Chrome 是"引用"这个目录加载扩展的，目录没了扩展就失效
+3. Chrome 打开 `chrome://extensions`
+4. 打开右上角的 **开发者模式** 开关
+5. 点击左上角 **加载已解压的扩展程序**，选择上一步的解压目录（选目录本身，不是 zip）
+6. 列表出现 **Chrome in Harness** 即安装成功
+
+**方式 B：源码构建（开发者）**
+
+```bash
+git clone https://github.com/hcfw007/chrome-in-harness.git
+cd chrome-in-harness
+npm ci && npm run build:extension
+```
+
+然后同方式 A 的 3-5 步，选择目录改为 `packages/extension/.output/chrome-mv3`。
+
+**扩展升级方法**
+
+- 方式 A：下载新版本 zip → 解压**覆盖同一目录** → 回到 `chrome://extensions`，在 Chrome in Harness 卡片上点 **刷新 ↻** 图标
+- 方式 B：`git pull && npm ci && npm run build:extension` → 同样点刷新图标
+
+**首次使用提示**
+
+- 扩展安装后即自动连接本地 server（`ws://127.0.0.1:8765`），无需配置；server 后启动也没关系，扩展会自动重连
+- 扩展的「扩展程序选项」页可维护域名白名单和访问模式
+- 首次访问白名单外的域名时，会弹出确认窗口，点「允许」即加入白名单
+
+### 第 ③ 步：注册 MCP 客户端
+
+- **OpenCode**：第 ① 步的 `start` 已自动写入全局配置，重开客户端会话即可
+- **其他 MCP 客户端**（Claude Code 等）：手动注册 remote MCP 端点
+
+  ```json
+  {
+    "mcpServers": {
+      "chrome-in-harness": {
+        "type": "http",
+        "url": "http://127.0.0.1:12306/mcp"
+      }
+    }
+  }
+  ```
+
+### 第 ④ 步：验证全链路
+
+```bash
 npx @chrome-in-harness/launcher doctor
 ```
 
-`npx @chrome-in-harness/launcher start` 会：
-- 检测 server 是否已在运行（已运行则直接复用）
-- 启动本地 server（WS `127.0.0.1:8765` ↔ MCP `http://127.0.0.1:12306/mcp`）
-- 自动向 `~/.config/opencode/opencode.json` 写入 `chrome-in-harness` 的 remote MCP 条目
-- 首次使用会创建配置目录；已有同名 MCP 条目会保留。已有配置无法读取或不是合法 JSON 对象时会报错退出，不覆盖原文件
+应看到：
 
-其他 MCP 客户端可手动注册 `http://127.0.0.1:12306/mcp`；launcher 只自动配置 OpenCode。
+```text
+[✓] server 已在运行 (http://127.0.0.1:12306/mcp)
+[✓] 扩展已连接（ping 通过）
+```
 
-然后在客户端里让模型调 `ping`，应返回扩展版本与 userAgent。
+也可以直接在 MCP 客户端里让模型调 `ping`，应返回扩展版本与 userAgent。
+
+> **MCP 升级后必须重启客户端会话**：opencode / Claude Code 等客户端在会话启动时注册工具 schema，运行中不会热更新。服务端升级新参数/新工具后，老会话仍按旧 schema 校验并拦截新参数——重启会话即可。ref 格式同样注意：快照 ref 带 token 后缀（如 `e3-a7k2`），跨会话/跨 worker 重启的旧 ref 会被显式拒绝（`STALE_REF`），重新 snapshot 即可。
 
 ### 常驻服务（可选）
 
@@ -133,12 +194,16 @@ npx @chrome-in-harness/launcher service uninstall  # 停止并移除
 - Windows 暂不支持，请用 `start` 常开终端（或 `pm2` 等进程守护）
 - 已安装时再次 `install` 会拒绝覆盖，需先 `uninstall`；server 重启后 Chrome 扩展会自动重连
 
-新建标签页（`tab_new`）默认后台打开，不抢占当前页面。需要登录、验证码或人工检查时，agent 应通知用户自行切换；仅当用户明确要求帮忙切换时才调用 `tab_select`。
+### 标签页使用约定
 
 agent 应优先使用 `ensure_tab`，保存返回的 `{tabId, url, reused}`，后续操作始终显式传入自己的 `tabId`。
 再次调用 `ensure_tab({tabId, url?})` 时，原标签存在且仍受管则复用，不导航、不切前台；已关闭时后台补建并返回新 ID。
 `url` 仅用于创建，复用后需要换页面应调用 `navigate`。标签被用户移出受管组会报错，不自动接管或补建。
 不同 agent 各自维护标签 ID，只有明确需要多标签时才使用 `tab_new`；服务不提供 agent 身份识别或独占锁。
+
+新建标签页（`tab_new`）默认后台打开，不抢占当前页面。需要登录、验证码或人工检查时，agent 应通知用户自行切换；仅当用户明确要求帮忙切换时才调用 `tab_select`。
+
+### 批量执行
 
 重复性的连续操作（如逐字符 `press_key` 输入）可用 `run_actions` 在**一次调用**里批量执行：
 传 `actions: [{tool, params}, ...]`，顶层 `tabId` 会注入未自带 `tabId` 的步骤。步骤按顺序执行、后续步骤能看到前序结果；
@@ -151,11 +216,11 @@ agent 应优先使用 `ensure_tab`，保存返回的 `{tabId, url, reused}`，�
 该设置保存在当前扩展的本地存储中，重载后保持。原白名单不会被清除，关闭开关后立即恢复生效。
 此模式会使用真实登录状态，可能读取敏感内容或提交真实数据，仅建议在专用测试浏览器配置与测试账号中开启。
 
-### 发布渠道
+## 发布渠道
 
 - **npm**：`@chrome-in-harness/server`（server，含 `chrome-in-harness-server` bin）、`@chrome-in-harness/launcher`（`chrome-in-harness` CLI）、`@chrome-in-harness/protocol`（协议类型）
-- **Chrome Web Store**：扩展以「Chrome in Harness」提交，权限与数据说明见 [docs/CWS_DISCLOSURE.md](docs/CWS_DISCLOSURE.md) 与 [docs/PRIVACY.md](docs/PRIVACY.md)
-- **GitHub Releases**：tag `v*` 自动触发 npm 发布 + 扩展 zip 打包（.github/workflows/publish.yml）
+- **GitHub Releases**：tag `v*` 自动触发 npm 发布 + 扩展 zip 打包（.github/workflows/publish.yml），扩展从 Releases 的 `chrome-in-harness-extension.zip` 安装
+- **Chrome Web Store**：暂未上架；权限与数据处理说明见 [docs/CWS_DISCLOSURE.md](docs/CWS_DISCLOSURE.md) 与 [docs/PRIVACY.md](docs/PRIVACY.md)
 
 ## 开发步骤
 
@@ -174,13 +239,10 @@ npm run build          # protocol → server → extension → launcher
 # 2. 起本地 server
 npm run dev:server
 
-# 3. Chrome 加载扩展：chrome://extensions → 开发者模式 → 加载已解压的扩展程序
-#    选择 packages/extension/.output/chrome-mv3
-#    修改扩展后运行 npm run build:extension，并在 Chrome 中重新加载扩展
+# 3. Chrome 加载扩展：见上文「第 ② 步 · 方式 B」
+#    修改扩展后运行 npm run build:extension，并在 chrome://extensions 点刷新
 
-# 4. 注册 MCP 到客户端（opencode 示例，~/.config/opencode/opencode.json）
-#    { "mcp": { "chrome-in-harness": { "type": "remote", "url": "http://127.0.0.1:12306/mcp" } } }
-#    或直接跑 `npx @chrome-in-harness/launcher start` 自动写入该条目
+# 4. 注册 MCP 到客户端：见上文「第 ③ 步」
 ```
 
 打包本地发版产物（三个 npm tarball + 扩展 zip，输出到 `dist-release/`）：
@@ -188,8 +250,6 @@ npm run dev:server
 ```bash
 npm run pack
 ```
-
-然后在客户端里让模型调 `ping`，应返回扩展版本与 userAgent。
 
 ## Roadmap
 
