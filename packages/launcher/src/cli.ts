@@ -16,15 +16,24 @@ import {homedir} from 'node:os'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 
+import {installService, launchdPlistPath, systemdUnitPath, uninstallService} from './service.js'
+
 const SERVER_URL = 'http://127.0.0.1:12306/mcp'
 const WS_PORT = 8765
 const HTTP_PORT = 12306
 
-type Command = 'start' | 'doctor' | 'help'
+export type ServiceAction = 'install' | 'uninstall' | 'status'
+type Command = 'start' | 'doctor' | 'help' | {service: ServiceAction}
 
 export function parseArgs(argv: string[]): Command {
   const cmd = argv[2] ?? 'help'
   if (cmd === 'start' || cmd === 'doctor') return cmd
+  if (cmd === 'service') {
+    const action = argv[3]
+    if (action === 'install' || action === 'uninstall' || action === 'status') {
+      return {service: action}
+    }
+  }
   return 'help'
 }
 
@@ -204,16 +213,53 @@ async function start(): Promise<void> {
   log('server 启动中。Ctrl-C 停止。')
 }
 
+/** service install 的 node / server 入口解析：node 用当前解释器，server 走 npm 依赖解析。 */
+function resolveServiceEntry(): {nodeBin: string; serverEntry: string} {
+  const serverEntry = fileURLToPath(import.meta.resolve('@chrome-in-harness/server'))
+  return {nodeBin: process.execPath, serverEntry}
+}
+
+async function service(action: 'install' | 'uninstall' | 'status'): Promise<void> {
+  if (action === 'status') {
+    const running = await isServerRunning()
+    const installed =
+      existsSync(launchdPlistPath()) || existsSync(systemdUnitPath())
+    log(`service: ${installed ? '已安装（开机自启）' : '未安装'}`)
+    log(`server: ${running ? `运行中 (${SERVER_URL})` : '未运行'}`)
+    if (!installed) {
+      log('  提示：npx @chrome-in-harness/launcher service install 可注册常驻服务。')
+    }
+    return
+  }
+  if (action === 'uninstall') {
+    await uninstallService()
+    log('service 已卸载（文件已删除，服务已停止）。')
+    return
+  }
+  const {nodeBin, serverEntry} = resolveServiceEntry()
+  await installService({nodeBin, serverEntry, wsPort: WS_PORT, httpPort: HTTP_PORT})
+  await writeOpencodeConfig()
+  const logHint = process.platform === 'darwin'
+    ? `日志: ${path.join(homedir(), 'Library', 'Logs', 'chrome-in-harness-server.log')}`
+    : '日志: journalctl --user -u chrome-in-harness.service'
+  log('service 已安装并启动：登录自启 + 崩溃自动拉起。')
+  log(`  ${logHint}`)
+}
+
 export async function runCli(): Promise<void> {
   const cmd = parseArgs(process.argv)
   if (cmd === 'start') await start()
   else if (cmd === 'doctor') await doctor()
+  else if (typeof cmd === 'object') await service(cmd.service)
   else {
     log('chrome-in-harness — 通过 Chrome 扩展控制真实 Chrome profile 的浏览器 MCP')
     log('')
     log('用法：')
-    log('  npx @chrome-in-harness/launcher doctor   # 环境自检')
-    log('  npx @chrome-in-harness/launcher start    # 启动 server 并写入 MCP 配置')
+    log('  npx @chrome-in-harness/launcher doctor           # 环境自检')
+    log('  npx @chrome-in-harness/launcher start            # 前台启动 server（Ctrl-C 退出）')
+    log('  npx @chrome-in-harness/launcher service install   # 注册常驻服务（launchd / systemd --user）')
+    log('  npx @chrome-in-harness/launcher service status    # 查看服务与运行状态')
+    log('  npx @chrome-in-harness/launcher service uninstall # 移除常驻服务')
     log('')
     log('扩展安装：chrome://extensions → 开发者模式 → 加载已解压的扩展程序')
     log('  （从 GitHub Releases 下载 chrome-in-harness-extension.zip，或本仓库 packages/extension/.output/chrome-mv3）')

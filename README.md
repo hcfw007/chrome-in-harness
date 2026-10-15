@@ -118,6 +118,21 @@ npx @chrome-in-harness/launcher doctor
 
 然后在客户端里让模型调 `ping`，应返回扩展版本与 userAgent。
 
+### 常驻服务（可选）
+
+`start` 是前台进程，终端关闭或机器重启后即结束。需要长期在线可注册为用户级服务（登录自启 + 崩溃自动拉起）：
+
+```bash
+npx @chrome-in-harness/launcher service install    # macOS launchd / Linux systemd --user
+npx @chrome-in-harness/launcher service status     # 查看安装与运行状态
+npx @chrome-in-harness/launcher service uninstall  # 停止并移除
+```
+
+- macOS：写入 `~/Library/LaunchAgents/com.chrome-in-harness.server.plist`（`RunAtLoad` + `KeepAlive`），日志在 `~/Library/Logs/chrome-in-harness-server.log`
+- Linux：写入 `~/.config/systemd/user/chrome-in-harness.service`（`Restart=always`），日志走 `journalctl --user -u chrome-in-harness.service`
+- Windows 暂不支持，请用 `start` 常开终端（或 `pm2` 等进程守护）
+- 已安装时再次 `install` 会拒绝覆盖，需先 `uninstall`；server 重启后 Chrome 扩展会自动重连
+
 新建标签页（`tab_new`）默认后台打开，不抢占当前页面。需要登录、验证码或人工检查时，agent 应通知用户自行切换；仅当用户明确要求帮忙切换时才调用 `tab_select`。
 
 agent 应优先使用 `ensure_tab`，保存返回的 `{tabId, url, reused}`，后续操作始终显式传入自己的 `tabId`。
