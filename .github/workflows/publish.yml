@@ -39,19 +39,21 @@ jobs:
       - run: npm run typecheck:extension
       - run: npm run build
 
+      # trusted publishing (OIDC) 需要 npm CLI ≥ 11.5.1；Node 22 自带 10.x
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@latest && npm --version
+
       # 顺序：protocol 是 server/launcher 的依赖，必须最先发。
+      # 认证走 OIDC trusted publishing：npmjs.com 各包 Settings → Trusted publishing
+      # 配置本仓库（hcfw007/chrome-in-harness）+ workflow 文件名 publish.yml，
+      # 并勾选 Allow npm publish（默认仅允许 stage publish）。无需 NPM_TOKEN。
+      # 公开仓库下 provenance 自动生成，无需 --provenance。
       - name: Publish @chrome-in-harness/protocol
-        run: npm publish --workspace @chrome-in-harness/protocol --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --workspace @chrome-in-harness/protocol --access public
       - name: Publish @chrome-in-harness/server
-        run: npm publish --workspace @chrome-in-harness/server --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --workspace @chrome-in-harness/server --access public
       - name: Publish @chrome-in-harness/launcher
-        run: npm publish --workspace @chrome-in-harness/launcher --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --workspace @chrome-in-harness/launcher --access public
 
   release:
     runs-on: ubuntu-latest
