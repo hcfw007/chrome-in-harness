@@ -45,13 +45,21 @@ export async function resolveTargetTab(tabId?: number): Promise<TargetTab> {
     const tab = await chrome.tabs.get(tabId).catch(() => undefined)
     if (tab === undefined || tab.id === undefined) throw tabClosed(tabId)
     if (!(await isTabManaged(tabId))) throw notManaged(tabId)
-    return {tabId: tab.id, url: tab.url ?? ''}
+    return {tabId: tab.id, url: tabUrl(tab)}
   }
   const tab = await findManagedTab()
   if (tab === undefined || tab.id === undefined) {
     throw new Error('no managed tab found; call tab_new to create one inside the Chrome in Harness group')
   }
-  return {tabId: tab.id, url: tab.url ?? ''}
+  return {tabId: tab.id, url: tabUrl(tab)}
+}
+
+/**
+ * 新建 tab 首次提交导航前 url 为空、只有 pendingUrl；按将要落地的 URL 鉴权，
+ * 否则 ensure_tab 后紧跟的调用会误报 Invalid URL。
+ */
+function tabUrl(tab: chrome.tabs.Tab): string {
+  return tab.url !== undefined && tab.url.length > 0 ? tab.url : (tab.pendingUrl ?? '')
 }
 
 function describeHost(url: string): string {

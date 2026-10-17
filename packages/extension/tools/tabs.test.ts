@@ -146,7 +146,7 @@ describe('tab_new 组边界与白名单', () => {
     const update = vi.fn(async () => ({id: 9001, active: true}))
     installChrome({create, update})
     await expect(tabNew({url} as never)).resolves.toEqual({tabId: 9001})
-    expect(create).toHaveBeenCalledWith({url, active: false})
+    expect(create).toHaveBeenCalledWith({url: url ?? 'about:blank', active: false})
     expect(update).not.toHaveBeenCalled()
   })
 
@@ -216,12 +216,12 @@ describe('ensure_tab', () => {
     expect(create).toHaveBeenCalledWith({url: 'https://project.feishu.cn', active: false})
   })
 
-  test('creates a blank background tab on first use without a URL', async () => {
+  test('creates an about:blank background tab on first use without a URL (chrome://newtab cannot be debugged)', async () => {
     isTabManaged.mockResolvedValue(true)
-    const create = vi.fn(async () => ({id: 9001, windowId: 1, url: 'chrome://newtab/'}))
+    const create = vi.fn(async () => ({id: 9001, windowId: 1, pendingUrl: 'about:blank'}))
     installChrome({create})
-    await expect(ensureTab({})).resolves.toEqual({tabId: 9001, url: 'chrome://newtab/', reused: false})
-    expect(create).toHaveBeenCalledWith({url: undefined, active: false})
+    await expect(ensureTab({})).resolves.toEqual({tabId: 9001, url: 'about:blank', reused: false})
+    expect(create).toHaveBeenCalledWith({url: 'about:blank', active: false})
   })
 
   test('does not replace or take over a tab moved out of the managed group', async () => {

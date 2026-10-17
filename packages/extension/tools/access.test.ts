@@ -33,6 +33,17 @@ test.each(['chrome://extensions', 'chrome-extension://abc/options.html', 'file:/
   await expect(assertUrlAllowed(url)).rejects.toThrow('DOMAIN_NOT_ALLOWED')
 })
 
+test('authorizes a still-loading tab by its pendingUrl', async () => {
+  const {isTabManaged} = await import('../lib/tab-group')
+  vi.mocked(isTabManaged).mockResolvedValueOnce(true)
+  store['allowAllDomains.v1'] = true
+  vi.stubGlobal('chrome', {
+    storage: {local: {get: async (key: string) => ({[key]: store[key]})}},
+    tabs: {get: async () => ({id: 1, url: '', pendingUrl: 'https://example.com/'})},
+  })
+  await expect(authorizeTab(1)).resolves.toEqual({tabId: 1, url: 'https://example.com/'})
+})
+
 test('all-domains mode still rejects tabs outside the managed group', async () => {
   store['allowAllDomains.v1'] = true
   await expect(authorizeTab(1)).rejects.toThrow('TAB_NOT_MANAGED')

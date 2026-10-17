@@ -76,9 +76,12 @@ export const tabNew: ToolHandler = async (params) => {
   return {tabId: created.id}
 }
 
+/** 无 URL 时开 about:blank：Chrome 默认的 chrome://newtab/ 无法 attach debugger，后续 navigate 必失败。 */
+const BLANK_URL = 'about:blank'
+
 async function createManagedTab(url: string | undefined): Promise<chrome.tabs.Tab & {id: number}> {
   if (url !== undefined) await authorizeNavigate(url)
-  const created = await chrome.tabs.create({url, active: false})
+  const created = await chrome.tabs.create({url: url ?? BLANK_URL, active: false})
   if (created.id === undefined) throw new Error('created tab has no id')
   await groupTab(created.id, created.windowId)
   return {...created, id: created.id}
