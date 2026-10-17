@@ -83,6 +83,7 @@ These limits do not defend against local malicious processes: the MCP endpoint h
 
 - **snapshot**: `chrome.debugger` + CDP `Accessibility.getFullAXTree`, rendered as Playwright ariaSnapshot-style indented text with `[ref=eN-<token>]` on interactive elements; prefer ref-based interaction to avoid selector drift. Coordinate clicks and focused-element input can skip refs.
 - **Ref lifecycle**: refs bind to a tab's latest snapshot, format `e<N>-<token>` (token = worker era + snapshot version); navigation / tab close / debugger detach invalidates them; cross-era or stale refs fail with an explicit `STALE_REF` (no silent mis-targeting); same-era snapshot supersede retries once by element identity; after the SW is killed, `NO_SNAPSHOT` guides a re-snapshot.
+- **click snapshot**: `click({ref, snapshot: true})` waits two animation frames after the click (300ms cap on background tabs) and returns a fresh snapshot — for pages that re-render on click and invalidate every ref, saving a `snapshot` round trip; content rendered after an async fetch still needs `wait` first. If the click lands but the snapshot fails, the failure is reported without erroring, so the click is not retried by mistake.
 - **click_at**: coordinate-click fallback when refs can't hit (iframe/canvas/icon-only containers); viewport CSS pixels; out-of-bounds coordinates error explicitly.
 - **press_key**: single keys / combos (`ctrl`/`alt`/`shift`/`meta` + key name, F1–F24 supported), optionally focusing a ref first; before dispatch, a default-action probe types into an offscreen input to verify keys actually insert characters (listener probes can't detect "event delivered but default action dropped" — the typical death after resize/blur); a dead pipeline self-heals and otherwise reports `KEY_PIPELINE_DEAD`.
 - **get_text**: prefers the AX value (the only reliable full read on virtualized editors) with innerText fallback; 8KB cap.
@@ -204,7 +205,7 @@ npx @chrome-in-harness/launcher service uninstall  # stop and remove
 
 Agents should prefer `ensure_tab`, save the returned `{tabId, url, reused}`, and pass that `tabId` explicitly on every subsequent call.
 Calling `ensure_tab({tabId, url?})` again reuses the tab if it still exists and is managed — no navigation, no focus change; if it was closed, a background tab is recreated and a new id returned.
-The `url` is only used at creation; to change pages on a reused tab call `navigate`. A tab the user dragged out of the managed group is an error, never auto-replaced.
+The `url` is only used at creation; to change pages on a reused tab call `navigate`. Without a `url`, the new tab opens at `about:blank`. A tab the user dragged out of the managed group is an error, never auto-replaced.
 Each agent keeps its own tab id; use `tab_new` only when multiple tabs are explicitly needed — the server provides no agent identity or locking.
 
 New tabs (`tab_new`) always open in the background without stealing focus. When a human is needed (login, captcha, review) the agent should ask the user to switch tabs; `tab_select` is called only when the user explicitly asks.

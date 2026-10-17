@@ -83,6 +83,7 @@ Chrome 扩展 · MV3 service worker / WXT
 
 - **snapshot**：`chrome.debugger` + CDP `Accessibility.getFullAXTree`，渲染成 Playwright ariaSnapshot 风格的缩进文本，交互元素带 `[ref=eN-<token>]`；优先用 ref 交互，减少选择器漂移。坐标点击、当前焦点输入等场景可不使用 ref
 - **ref 生命周期**：ref 绑定 tab 的最近一次快照，格式 `e<N>-<token>`（token 编码 worker 代 + 快照版本）；导航/关 tab/debugger 分离即失效；跨 worker 代或过期一律显式 `STALE_REF`（拒绝静默错点）；同代快照更替时交互工具按元素身份自动重试一次；SW 被杀后报 `NO_SNAPSHOT` 引导重新 snapshot
+- **click snapshot**：`click({ref, snapshot: true})` 点击后等两帧渲染（后台 tab 上限 300ms）再返回新快照，适合点击即重渲染、旧 ref 全部失效的页面，省一次 `snapshot` 往返；异步取数后才渲染的内容仍应先 `wait`。点击已生效但取快照失败时只提示失败、不报错，避免误重点
 - **click_at**：ref 命中不了时（iframe/Canvas/icon-only 容器）的坐标点击兜底，视口 CSS 像素，越界显式报错
 - **press_key**：单键/组合键（`ctrl`/`alt`/`shift`/`meta` + 键名，支持 F1-F24），可选先 focus 指定 ref；派发前有默认动作探针——临时离屏输入框验证按键真的产生字符插入（监听器探针检测不出「事件送达但默认动作被丢弃」的假活，resize/失焦后的典型死法），死了自动重开焦点仿真/激活自愈，仍死显式报 `KEY_PIPELINE_DEAD`
 - **get_text**：优先读 AX value（虚拟滚动编辑器全文唯一可靠读数），innerText 兜底，上限 8KB
@@ -204,7 +205,7 @@ npx @chrome-in-harness/launcher service uninstall  # 停止并移除
 
 agent 应优先使用 `ensure_tab`，保存返回的 `{tabId, url, reused}`，后续操作始终显式传入自己的 `tabId`。
 再次调用 `ensure_tab({tabId, url?})` 时，原标签存在且仍受管则复用，不导航、不切前台；已关闭时后台补建并返回新 ID。
-`url` 仅用于创建，复用后需要换页面应调用 `navigate`。标签被用户移出受管组会报错，不自动接管或补建。
+`url` 仅用于创建，复用后需要换页面应调用 `navigate`；不传 `url` 时新标签开在 `about:blank`。标签被用户移出受管组会报错，不自动接管或补建。
 不同 agent 各自维护标签 ID，只有明确需要多标签时才使用 `tab_new`；服务不提供 agent 身份识别或独占锁。
 
 新建标签页（`tab_new`）默认后台打开，不抢占当前页面。需要登录、验证码或人工检查时，agent 应通知用户自行切换；仅当用户明确要求帮忙切换时才调用 `tab_select`。
