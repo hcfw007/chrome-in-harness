@@ -98,6 +98,22 @@ describe('browser defs', () => {
     expect(content).toEqual([{type: 'text', text: 'Clicked e3'}])
   })
 
+  test('click with snapshot: true appends the fresh snapshot', async () => {
+    const fake = fakeBridge({snapshot: {snapshot: '- button "OK" [ref=e1-ab]', version: 5, url: 'https://e.com', truncated: false}})
+    const content = await run(byName('click'), {ref: 'e3', snapshot: true}, fake.call)
+    expect(fake.received[0]).toEqual({tool: 'click', params: {ref: 'e3', snapshot: true}})
+    const text = (content[0] as {text: string}).text
+    expect(text).toContain('Clicked e3')
+    expect(text).toContain('version 5')
+    expect(text).toContain('[ref=e1-ab]')
+  })
+
+  test('click reports a snapshot failure without failing the click', async () => {
+    const fake = fakeBridge({snapshotError: 'detached'})
+    const content = await run(byName('click'), {ref: 'e3', snapshot: true}, fake.call)
+    expect((content[0] as {text: string}).text).toBe('Clicked e3 (snapshot failed: detached; call snapshot to continue)')
+  })
+
   test('click_at forwards coordinates and confirms', async () => {
     const fake = fakeBridge({})
     const content = await run(byName('click_at'), {x: 2466, y: 22, coordinates: true}, fake.call)

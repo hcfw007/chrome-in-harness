@@ -23,6 +23,7 @@ import type {InputModifier} from '../lib/keymap'
 import {planVerbatim} from '../lib/verbatim'
 import {authorizeTab} from './access'
 import {withRef} from './ref-recovery'
+import {snapshot} from './snapshot'
 
 import type {ToolHandler} from './types'
 
@@ -56,8 +57,16 @@ const HAS_OPEN_DIALOG =
   'for (var i=0;i<els.length;i++){var r=els[i].getBoundingClientRect();' +
   'if (r.width>0&&r.height>0) return true}return false})()'
 
+/**
+ * 点击后渲染静置：两帧 rAF（框架同步重渲染落到 DOM）；后台 tab 的 rAF 可能被节流，
+ * 以 300ms 兜底，保证不挂起。
+ */
+const RENDER_SETTLED =
+  'new Promise(function(r){var t=setTimeout(function(){r(true)},300);' +
+  'requestAnimationFrame(function(){requestAnimationFrame(function(){clearTimeout(t);r(true)})})})'
+
 export const click: ToolHandler = async (params) => {
-  const {ref, tabId} = params as {ref: string; tabId?: number}
+  const {ref, tabId, snapshot: wantSnapshot} = params as {ref: string; tabId?: number; snapshot?: boolean}
   const target = await prepareInputTab(tabId)
   await withRef(target.tabId, ref, async (entry) => {
     const {x, y} = await locate(target.tabId, entry.backendDOMNodeId)
@@ -88,7 +97,14 @@ export const click: ToolHandler = async (params) => {
       }
     }
   })
-  return {}
+  if (wantSnapshot !== true) return {}
+  // 点击已生效：快照失败不能让调用方误以为点击失败而重点
+  try {
+    await evaluateJson<boolean>(target.tabId, RENDER_SETTLED)
+    return {snapshot: await snapshot({tabId: target.tabId})}
+  } catch (error) {
+    return {snapshotError: error instanceof Error ? error.message : String(error)}
+  }
 }
 
 /**

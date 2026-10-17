@@ -2,6 +2,7 @@
 import {
   clickAtParams,
   clickParams,
+  clickResult,
   getTextParams,
   getTextResult,
   hoverParams,
@@ -76,10 +77,21 @@ const click = defineTool({
   description:
     'Click the element with the given ref from the latest snapshot. ' +
     'When the click targets a button inside an open dialog and the dialog is still present afterwards, ' +
-    'the click is retried once via keyboard activation (focus + Enter) — dialog buttons sometimes move between measure and click.',
+    'the click is retried once via keyboard activation (focus + Enter) — dialog buttons sometimes move between measure and click. ' +
+      'Pass snapshot: true to get a fresh full snapshot after the click (waits ~2 animation frames first); ' +
+      'saves a round trip on pages that re-render and invalidate refs. For async content, use wait instead.',
   schema: clickParams.shape,
   async run(args, call) {
-    await callBridge(call, 'click', args, okResult)
+    const result = await callBridge(call, 'click', args, clickResult)
+    if (result.snapshot !== undefined) {
+      const s = result.snapshot
+      return toolText(
+        `Clicked ${args.ref}\n\nSnapshot of ${s.url} (version ${s.version})${s.truncated ? ' — TRUNCATED' : ''}\n\n${s.snapshot}`,
+      )
+    }
+    if (result.snapshotError !== undefined) {
+      return toolText(`Clicked ${args.ref} (snapshot failed: ${result.snapshotError}; call snapshot to continue)`)
+    }
     return toolText(`Clicked ${args.ref}`)
   },
 })

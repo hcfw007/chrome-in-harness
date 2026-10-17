@@ -98,6 +98,8 @@ describe('params schemas', () => {
     expect(clickParams.safeParse({ref: 'x1'}).success).toBe(false)
     expect(clickParams.safeParse({ref: 'e1-A3F91'}).success).toBe(false) // token 只允许小写字母数字
     expect(clickParams.safeParse({}).success).toBe(false)
+    expect(clickParams.safeParse({ref: 'e1', snapshot: true}).success).toBe(true)
+    expect(clickParams.safeParse({ref: 'e1', snapshot: 'yes'}).success).toBe(false)
   })
 
   test('click_at requires finite coords and the coordinates:true intent flag', () => {

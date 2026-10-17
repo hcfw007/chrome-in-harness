@@ -63,6 +63,8 @@ export const snapshotParams = z.object({
 
 export const clickParams = z.object({
   ref: z.string().regex(REF_PATTERN),
+  /** true 时点击后等渲染静置，再返回一份新快照（省一次 snapshot 往返）。 */
+  snapshot: z.boolean().optional(),
   ...tabIdField,
 })
 
@@ -281,6 +283,12 @@ export const snapshotResult = z.object({
   version: z.number().int(),
   url: z.string(),
   truncated: z.boolean(),
+})
+
+/** snapshot 未请求时两字段均缺省；点击已生效但取快照失败时只带 snapshotError。 */
+export const clickResult = z.object({
+  snapshot: snapshotResult.optional(),
+  snapshotError: z.string().optional(),
 })
 
 export const screenshotResult = z.object({
