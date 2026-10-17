@@ -1,11 +1,13 @@
 import type {IncomingMessage, ServerResponse} from 'node:http'
+import {createRequire} from 'node:module'
 import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js'
 import {StreamableHTTPServerTransport} from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import {registerAllTools} from './tools/index.js'
 import type {WsBridge} from './ws-bridge.js'
 
 const SERVER_NAME = 'chrome-in-harness'
-const SERVER_VERSION = '0.1.0'
+// src/ 与 dist/ 都在包根下一层；package.json 是版本单一真源，随 npm tarball 发布
+export const SERVER_VERSION = (createRequire(import.meta.url)('../package.json') as {version: string}).version
 const MAX_BODY_BYTES = 1024 * 1024
 
 const PARSE_ERROR = -32700
