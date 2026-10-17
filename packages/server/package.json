@@ -11,7 +11,7 @@
     }
   },
   "bin": {
-    "chrome-in-harness-server": "./dist/index.js"
+    "chrome-in-harness-server": "dist/index.js"
   },
   "files": [
     "dist"
