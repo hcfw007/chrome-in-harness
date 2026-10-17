@@ -68,7 +68,10 @@ function createMcpServer(wsBridge: WsBridge): McpServer {
         'Reuse that same tab via navigate rather than creating new tabs. Call ensure_tab with your saved tabId to recover a closed tab, then save the replacement id. ' +
         'Do not reuse other agents\' tabs. Create additional tabs only when explicitly needed. ' +
         'Never switch focus automatically: notify the user when manual interaction is needed, and call tab_select only when explicitly asked. ' +
-        'For repetitive sequences (for example typing a string with press_key), prefer run_actions to batch them in one request.',
+        'For repetitive sequences (for example typing a string with press_key), prefer run_actions to batch them in one request. ' +
+        'For async-rendered content, call wait (text/selector) instead of sleeping, and before screenshot after an interaction. ' +
+        'To debug a page, use read_console / read_network and evaluate_script to read page state. ' +
+        'Pages that re-render on click invalidate refs: use click with snapshot: true to get fresh refs in the same call.',
     },
   )
   registerAllTools(server, (tool, params) => wsBridge.sendToExtension(tool, params))
