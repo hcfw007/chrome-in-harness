@@ -1,6 +1,8 @@
 /** ref 交互工具：click / hover / type / press_key / scroll。ref 三态解析 + CDP 真实输入。 */
+import {locatorParamsError} from '@chrome-in-harness/protocol'
 import {ensureAttached} from '../lib/cdp'
 import {
+  describeNodeRect,
   dispatchClick,
   dispatchHover,
   dispatchKey,
@@ -22,6 +24,7 @@ import {buildHitTestScript, parseHitTestResult} from '../lib/hit-test'
 import type {HitInfo} from '../lib/hit-test'
 import {resolveKey} from '../lib/keymap'
 import type {InputModifier} from '../lib/keymap'
+import {buildScrollToScript, DESCRIBE_ELEMENT, parseScrollToReceipt} from '../lib/scroll-locate'
 import {planVerbatim} from '../lib/verbatim'
 import {authorizeTab} from './access'
 import {withRef} from './ref-recovery'
@@ -365,6 +368,34 @@ export const pressKey: ToolHandler = async (params) => {
   }
   await dispatchKey(target.tabId, resolved.info, raw.modifiers ?? [])
   return {}
+}
+
+/** 定位滚动：ref / selector / text 三选一，把元素滚到视口中央并回执 rect。 */
+export const scrollTo: ToolHandler = async (params) => {
+  const raw = params as {ref?: string; selector?: string; text?: string; tabId?: number}
+  const invalid = locatorParamsError(raw)
+  if (invalid !== undefined) throw new Error(invalid)
+  const target = await authorizeTab(raw.tabId)
+  await ensureAttached(target.tabId)
+
+  let receipt: unknown
+  if (raw.ref !== undefined) {
+    receipt = await withRef(target.tabId, raw.ref, async (entry) => {
+      await scrollIntoViewIfNeeded(target.tabId, entry.backendDOMNodeId)
+      return describeNodeRect(target.tabId, entry.backendDOMNodeId, DESCRIBE_ELEMENT)
+    })
+  } else {
+    receipt = await evaluateJson<unknown>(
+      target.tabId,
+      buildScrollToScript(raw.selector !== undefined ? {selector: raw.selector} : {text: raw.text ?? ''}),
+    )
+  }
+  const parsed = parseScrollToReceipt(receipt)
+  if (parsed === null) {
+    const what = raw.selector !== undefined ? `selector ${JSON.stringify(raw.selector)}` : `text ${JSON.stringify(raw.text)}`
+    throw new Error(`scroll_to: no visible element matches ${what}; snapshot or wait for it to render first`)
+  }
+  return parsed
 }
 
 export const scroll: ToolHandler = async (params) => {

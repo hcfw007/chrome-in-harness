@@ -16,7 +16,9 @@ import {
   readNetworkParams,
   runActionsParams,
   runActionsResult,
+  reloadParams,
   scrollParams,
+  scrollToParams,
   snapshotParams,
   snapshotResult,
   tabSelectParams,
@@ -210,15 +212,33 @@ describe('result schemas', () => {
 })
 
 describe('P3 schemas', () => {
-  test('wait requires exactly one condition', () => {
+  test('wait allows at most one condition, or a plain delay via timeoutMs', () => {
     expect(waitParams.safeParse({text: 'hello'}).success).toBe(true)
     expect(waitParams.safeParse({selector: '#x'}).success).toBe(true)
     expect(waitParams.safeParse({urlContains: '/docs'}).success).toBe(true)
     expect(waitParams.safeParse({editorRendered: true}).success).toBe(true)
+    expect(waitParams.safeParse({networkIdle: true}).success).toBe(true)
+    expect(waitParams.safeParse({timeoutMs: 500}).success).toBe(true)
     expect(waitParams.safeParse({}).success).toBe(false)
+    expect(waitParams.safeParse({networkIdle: true, text: 'a'}).success).toBe(false)
     expect(waitParams.safeParse({text: 'a', selector: '#x'}).success).toBe(false)
     expect(waitParams.safeParse({text: ''}).success).toBe(false)
     expect(waitParams.safeParse({editorRendered: false, text: 'a'}).success).toBe(false)
+  })
+
+  test('scroll_to takes exactly one of ref / selector / text', () => {
+    expect(scrollToParams.safeParse({ref: 'e3-ab12'}).success).toBe(true)
+    expect(scrollToParams.safeParse({selector: '.row'}).success).toBe(true)
+    expect(scrollToParams.safeParse({text: '导出'}).success).toBe(true)
+    expect(scrollToParams.safeParse({}).success).toBe(false)
+    expect(scrollToParams.safeParse({ref: 'e3', selector: '.row'}).success).toBe(false)
+    expect(scrollToParams.safeParse({ref: 'bad'}).success).toBe(false)
+  })
+
+  test('reload accepts hard and waitUntil', () => {
+    expect(reloadParams.safeParse({}).success).toBe(true)
+    expect(reloadParams.safeParse({hard: true, waitUntil: 'networkidle'}).success).toBe(true)
+    expect(reloadParams.safeParse({waitUntil: 'forever'}).success).toBe(false)
   })
 
   test('wait bounds timeoutMs', () => {

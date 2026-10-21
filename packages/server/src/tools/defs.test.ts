@@ -135,16 +135,55 @@ describe('browser defs', () => {
     await expect(run(byName('click'), {ref: 'e1'}, fake.call)).rejects.toThrow('STALE_REF')
   })
 
-  test('wait rejects zero or multiple conditions before calling the bridge', async () => {
+  test('wait rejects multiple conditions, or no condition without timeoutMs, before calling the bridge', async () => {
     const fake = fakeBridge({matched: true, timedOut: false})
-    await expect(run(byName('wait'), {}, fake.call)).rejects.toThrow('exactly one')
+    await expect(run(byName('wait'), {}, fake.call)).rejects.toThrow('only timeoutMs for a plain delay')
     await expect(
       run(byName('wait'), {text: 'a', selector: '#x'}, fake.call),
-    ).rejects.toThrow('exactly one')
+    ).rejects.toThrow('at most one')
     await expect(
-      run(byName('wait'), {editorRendered: true, urlContains: '/x'}, fake.call),
-    ).rejects.toThrow('exactly one')
+      run(byName('wait'), {networkIdle: true, urlContains: '/x'}, fake.call),
+    ).rejects.toThrow('at most one')
     expect(fake.received).toHaveLength(0)
+  })
+
+  test('wait with only timeoutMs is a plain delay', async () => {
+    const fake = fakeBridge({matched: true, timedOut: false})
+    const content = await run(byName('wait'), {timeoutMs: 1500}, fake.call)
+    expect(fake.received).toEqual([{tool: 'wait', params: {timeoutMs: 1500}}])
+    expect(content).toEqual([{type: 'text', text: 'Waited 1500ms.'}])
+  })
+
+  test('wait networkIdle reports idle or timeout', async () => {
+    const idle = await run(byName('wait'), {networkIdle: true}, fakeBridge({matched: true, timedOut: false}).call)
+    expect(idle).toEqual([{type: 'text', text: 'Network idle.'}])
+    const busy = await run(byName('wait'), {networkIdle: true}, fakeBridge({matched: false, timedOut: true}).call)
+    expect((busy[0] as {text: string}).text).toContain('Timed out')
+  })
+
+  test('scroll_to requires exactly one locator and renders the receipt', async () => {
+    const fake = fakeBridge({rect: {x: 10, y: 300, width: 80, height: 20}, inViewport: true, tag: 'button', text: '导出'})
+    await expect(run(byName('scroll_to'), {}, fake.call)).rejects.toThrow('exactly one of ref / selector / text')
+    await expect(run(byName('scroll_to'), {ref: 'e1', text: 'x'}, fake.call)).rejects.toThrow('got 2')
+    const content = await run(byName('scroll_to'), {text: '导出'}, fake.call)
+    expect(fake.received).toEqual([{tool: 'scroll_to', params: {text: '导出'}}])
+    expect(content).toEqual([{type: 'text', text: 'Scrolled to <button> "导出" rect=10,300 80x20 — in viewport'}])
+  })
+
+  test('reload forwards hard and reports cache bypass', async () => {
+    const fake = fakeBridge({url: 'https://e.com/a', title: 'A', loaded: true, hard: true})
+    const content = await run(byName('reload'), {hard: true}, fake.call)
+    expect(fake.received).toEqual([{tool: 'reload', params: {hard: true}}])
+    expect(content).toEqual([{type: 'text', text: 'Hard-reloaded (cache bypassed) https://e.com/a — "A"'}])
+  })
+
+  test('screenshot appends viewport metrics when the extension reports them', async () => {
+    const fake = fakeBridge({data: 'aGVsbG8=', mimeType: 'image/png', width: 1280, height: 720, dpr: 2, scale: 0.5})
+    const content = await run(byName('screenshot'), {}, fake.call)
+    expect(content[0]).toEqual({type: 'image', data: 'aGVsbG8=', mimeType: 'image/png'})
+    expect((content[1] as {text: string}).text).toBe(
+      'Viewport 1280x720 CSS px, dpr 2; image px = CSS px (downscaled from dpr 2) — use these coordinates with click_at.',
+    )
   })
 
   test('wait forwards editorRendered and renders matched', async () => {

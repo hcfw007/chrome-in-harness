@@ -4,10 +4,17 @@ import {
   clickAtResult,
   clickParams,
   clickResult,
+  countWaitConditions,
   getTextParams,
   getTextResult,
   hoverParams,
   pressKeyParams,
+  locatorParamsError,
+  reloadParams,
+  reloadResult,
+  scrollToParamsShape,
+  scrollToResult,
+  waitParamsError,
   waitParamsShape,
   waitResult,
   navigateParams,
@@ -250,11 +257,21 @@ const scroll = defineTool({
 const screenshot = defineTool({
   name: 'screenshot',
   title: 'Capture a screenshot',
-  description: 'Capture a PNG screenshot of the visible viewport.',
+  description:
+    'Capture a PNG screenshot of the visible viewport. The image is scaled so 1 image pixel = 1 CSS pixel, ' +
+    'so coordinates measured on it can be passed to click_at directly; the text part reports width/height/dpr.',
   schema: screenshotParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'screenshot', args, screenshotResult)
-    return toolImage(result.data, result.mimeType)
+    const image = toolImage(result.data, result.mimeType)
+    if (result.width === undefined || result.height === undefined) return image
+    const pixels = result.scale !== undefined && result.scale !== 1
+      ? `image px = CSS px (downscaled from dpr ${result.dpr})`
+      : 'image px = CSS px'
+    return [
+      ...image,
+      ...toolText(`Viewport ${result.width}x${result.height} CSS px, dpr ${result.dpr ?? 1}; ${pixels} — use these coordinates with click_at.`),
+    ]
   },
 })
 
@@ -265,22 +282,55 @@ const wait = defineTool({
     'Wait until a condition holds on the page: text appears in the body, a CSS selector matches, the URL contains a substring, ' +
     'or editorRendered:true (a Monaco-style editor exists with height > 40px, width > 200px and a non-empty ' +
     'visible view-line — resize-collapsed editors are auto-recovered via monaco layout(); guards against both ' +
-    'collapsed/hidden instances and 5x5 narrow-strip false readiness after window resizes). Exactly one condition per call. ' +
+    'collapsed/hidden instances and 5x5 narrow-strip false readiness after window resizes), ' +
+    'or networkIdle:true (no new network request for 500ms — e.g. after a click that triggers async fetches). ' +
+    'At most one condition per call; pass only timeoutMs for a plain delay (prefer a real condition when one exists). ' +
     'Returns {matched, timedOut} — a timeout is not an error; snapshot afterwards to see the current state.',
-  // 注册无 refine 的 shape（refine 会破坏 tools/list 的 JSON schema）；四选一的约束在 run 里落地。
+  // 注册无 refine 的 shape（refine 会破坏 tools/list 的 JSON schema）；条件约束在 run 里落地。
   schema: waitParamsShape,
   async run(args, call) {
-    const conditions = [args.text, args.selector, args.urlContains, args.editorRendered].filter(
-      (v) => v !== undefined,
-    ).length
-    if (conditions !== 1) {
-      throw new Error(
-        `exactly one of text / selector / urlContains / editorRendered is required (got ${conditions})`,
-      )
-    }
+    const invalid = waitParamsError(args)
+    if (invalid !== undefined) throw new Error(invalid)
     const result = await callBridge(call, 'wait', args, waitResult)
-    if (result.matched) return toolText('Condition matched.')
+    if (countWaitConditions(args) === 0) return toolText(`Waited ${args.timeoutMs}ms.`)
+    if (result.matched) return toolText(args.networkIdle === true ? 'Network idle.' : 'Condition matched.')
     return toolText('Timed out after waiting; condition not met. Take a snapshot to see the current state.')
+  },
+})
+
+const scrollTo = defineTool({
+  name: 'scroll_to',
+  title: 'Scroll an element into view',
+  description:
+    'Scroll so that an element is centered in the viewport. Pass exactly one of: ref (from snapshot), ' +
+    'selector (CSS, first match), or text (first visible element whose own text contains the substring, case-sensitive). ' +
+    'Returns the element\'s viewport rect after scrolling (CSS px, usable for click_at) and inViewport — ' +
+    'false means it is still clipped (sticky header, nested scroll container, zero size).',
+  schema: scrollToParamsShape,
+  async run(args, call) {
+    const invalid = locatorParamsError(args)
+    if (invalid !== undefined) throw new Error(invalid)
+    const result = await callBridge(call, 'scroll_to', args, scrollToResult)
+    const {x, y, width, height} = result.rect
+    const label = result.tag !== undefined ? ` <${result.tag}>${result.text !== undefined ? ` "${result.text}"` : ''}` : ''
+    const state = result.inViewport ? 'in viewport' : 'NOT fully in viewport (clipped or zero-size)'
+    return toolText(`Scrolled to${label} rect=${x},${y} ${width}x${height} — ${state}`)
+  },
+})
+
+const reload = defineTool({
+  name: 'reload',
+  title: 'Reload the page',
+  description:
+    'Reload the current page and wait like navigate (waitUntil: "load" | "domcontentloaded" (default) | "networkidle"). ' +
+    'hard:true bypasses the HTTP cache — use it to check whether a deploy is live instead of adding cache-busting ' +
+    'query params that change the route. All refs are invalidated; snapshot again afterwards.',
+  schema: reloadParams.shape,
+  async run(args, call) {
+    const result = await callBridge(call, 'reload', args, reloadResult)
+    const kind = result.hard ? 'Hard-reloaded (cache bypassed)' : 'Reloaded'
+    const suffix = result.loaded ? '' : ' (readiness signal timed out; content may be incomplete)'
+    return toolText(`${kind} ${result.url}${suffix}${result.title ? ` — "${result.title}"` : ''}`)
   },
 })
 
@@ -295,6 +345,8 @@ export const BROWSER_TOOL_DEFS: readonly ToolDef[] = [
   pressKey,
   getText,
   scroll,
+  scrollTo,
+  reload,
   screenshot,
 ]
 

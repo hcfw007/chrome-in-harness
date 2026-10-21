@@ -227,18 +227,86 @@ export const waitParamsShape = {
   urlContains: z.string().min(1).optional(),
   /** Monaco 类编辑器渲染完成：存在高度 > 40px 的 .monaco-editor 且其内有非空 view-line。 */
   editorRendered: z.boolean().optional(),
+  /** 网络静默：连续 500ms 无新请求（SPA 首屏取数/轮询间隙）。 */
+  networkIdle: z.boolean().optional(),
   timeoutMs: z.number().int().positive().max(30_000).optional(),
   ...tabIdField,
 }
 
-export const waitParams = z.object(waitParamsShape).refine(
-  (p) => [p.text, p.selector, p.urlContains, p.editorRendered].filter((v) => v !== undefined).length === 1,
-  {message: 'exactly one of text / selector / urlContains / editorRendered is required'},
-)
+export const WAIT_CONDITION_KEYS = ['text', 'selector', 'urlContains', 'editorRendered', 'networkIdle'] as const
+
+export function countWaitConditions(p: Partial<Record<(typeof WAIT_CONDITION_KEYS)[number], unknown>>): number {
+  return WAIT_CONDITION_KEYS.filter((key) => p[key] !== undefined).length
+}
+
+/** 校验失败时的文案（server 与 extension 共用）；合法返回 undefined。 */
+export function waitParamsError(p: Partial<Record<(typeof WAIT_CONDITION_KEYS)[number] | 'timeoutMs', unknown>>): string | undefined {
+  const count = countWaitConditions(p)
+  if (count > 1) return `pass at most one of ${WAIT_CONDITION_KEYS.join(' / ')} (got ${count})`
+  if (count === 0 && p.timeoutMs === undefined) {
+    return `pass one of ${WAIT_CONDITION_KEYS.join(' / ')}, or only timeoutMs for a plain delay`
+  }
+  return undefined
+}
+
+export const waitParams = z.object(waitParamsShape).superRefine((p, ctx) => {
+  const message = waitParamsError(p)
+  if (message !== undefined) ctx.addIssue({code: 'custom', message})
+})
 
 export const waitResult = z.object({
   matched: z.boolean(),
   timedOut: z.boolean(),
+})
+
+/** 元素定位三选一（scroll_to / probe / get_html 共用）：ref、CSS selector 或可见文本。 */
+const locatorFields = {
+  ref: z.string().regex(REF_PATTERN).optional(),
+  selector: z.string().min(1).max(500).optional(),
+  /** 可见文本子串（大小写敏感）：取文档序首个「自身直接包含该文本」的可见元素。 */
+  text: z.string().min(1).max(200).optional(),
+} as const
+
+export function locatorParamsError(p: {ref?: unknown; selector?: unknown; text?: unknown}): string | undefined {
+  const count = [p.ref, p.selector, p.text].filter((v) => v !== undefined).length
+  return count === 1 ? undefined : `pass exactly one of ref / selector / text (got ${count})`
+}
+
+function withLocatorRefine<S extends z.ZodRawShape>(shape: S) {
+  return z.object(shape).superRefine((p, ctx) => {
+    const message = locatorParamsError(p as {ref?: unknown; selector?: unknown; text?: unknown})
+    if (message !== undefined) ctx.addIssue({code: 'custom', message})
+  })
+}
+
+/** 定位滚动：把元素滚进视野。 */
+export const scrollToParamsShape = {...locatorFields, ...tabIdField}
+
+export const scrollToParams = withLocatorRefine(scrollToParamsShape)
+
+const rectSchema = z.object({x: z.number(), y: z.number(), width: z.number(), height: z.number()})
+
+export const scrollToResult = z.object({
+  /** 滚动后的元素视口 rect（CSS px）。 */
+  rect: rectSchema,
+  /** 元素中心是否落在视口内（false = 被 sticky 头/容器裁剪等，需进一步处理）。 */
+  inViewport: z.boolean(),
+  tag: z.string().optional(),
+  text: z.string().optional(),
+})
+
+export const reloadParams = z.object({
+  /** true = 绕过 HTTP 缓存（验证部署是否生效）。 */
+  hard: z.boolean().optional(),
+  waitUntil: z.enum(['load', 'domcontentloaded', 'networkidle']).optional(),
+  ...tabIdField,
+})
+
+export const reloadResult = z.object({
+  url: z.string(),
+  title: z.string().optional(),
+  loaded: z.boolean(),
+  hard: z.boolean(),
 })
 
 export const addAllowlistDomainParams = z.object({
@@ -315,6 +383,12 @@ export const clickResult = z.object({
 export const screenshotResult = z.object({
   data: z.string(), // base64 PNG
   mimeType: z.literal('image/png'),
+  /** 视口 CSS 尺寸与设备像素比；旧扩展不回传。 */
+  width: z.number().optional(),
+  height: z.number().optional(),
+  dpr: z.number().optional(),
+  /** 图片像素 / 设备像素的缩放比：1/dpr 时图片像素 == CSS 像素。 */
+  scale: z.number().optional(),
 })
 
 export interface TabSummary {
@@ -367,6 +441,8 @@ export const TOOL_NAMES = [
   'click_at',
   'get_text',
   'run_actions',
+  'scroll_to',
+  'reload',
 ] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]

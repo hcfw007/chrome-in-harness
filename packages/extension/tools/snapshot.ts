@@ -8,6 +8,7 @@ import {
   getFullAxTree,
   getTabTitle,
   navigateAndWait,
+  reloadAndWait,
 } from '../lib/cdp-commands'
 import type {NavigateWaitUntil} from '../lib/cdp-commands'
 import {refStore} from '../lib/ref-store'
@@ -118,6 +119,18 @@ export const snapshot: ToolHandler = async (params) => {
     url: target.url,
     truncated: state.truncated,
   }
+}
+
+/** reload：当前 URL 必须已授权（authorizeTab）；hard 绕过缓存。旧 ref 一律失效。 */
+export const reload: ToolHandler = async (params) => {
+  const raw = params as {tabId?: number; hard?: boolean; waitUntil?: NavigateWaitUntil}
+  const hard = raw.hard === true
+  const target = await authorizeTab(raw.tabId)
+  await ensureAttached(target.tabId)
+  refStore.invalidate(target.tabId)
+  const {loaded} = await reloadAndWait(target.tabId, hard, raw.waitUntil ?? 'domcontentloaded')
+  const title = await getTabTitle(target.tabId)
+  return {url: target.url, title, loaded, hard}
 }
 
 /** navigate 只校验目标 URL（起点 tab 常是 about:blank，当前 URL 不在名单是正常的）。 */

@@ -3,12 +3,12 @@ import {runActions} from './batch'
 import {readConsole, readNetwork} from './debug'
 import {evaluateScript} from './evaluate'
 import {getText} from './get-text'
-import {click, clickAt, hover, pressKey, scroll, typeText} from './interact'
+import {click, clickAt, hover, pressKey, scroll, scrollTo, typeText} from './interact'
 import {ping} from './ping'
 import {invoke, register} from './registry'
 import {requestPermission} from './request-permission'
 import {screenshot} from './screenshot'
-import {navigate, snapshot} from './snapshot'
+import {navigate, reload, snapshot} from './snapshot'
 import {ensureTab, tabClose, tabList, tabNew, tabSelect, takeoverTab} from './tabs'
 import {wait} from './wait'
 
@@ -41,3 +41,5 @@ register('evaluate_script', evaluateScript)
 register('request_permission', requestPermission)
 register('get_text', getText)
 register('run_actions', runActions)
+register('scroll_to', scrollTo)
+register('reload', reload)
