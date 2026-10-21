@@ -71,12 +71,18 @@ Chrome 扩展 · MV3 service worker / WXT
 
 ## 工具与行为细节
 
-**工具集**（24 个）：`ping`、`navigate`、`snapshot`、`click`、`click_at`、`hover`、`type`、`press_key`、`get_text`、`scroll`、`screenshot`、`tab_list`、`tab_new`、`ensure_tab`、`tab_select`、`tab_close`、`takeover_tab`、`run_actions`、`read_console`、`read_network`、`wait`、`add_allowlist_domain`、`evaluate_script`、`request_permission`。
+**工具集**（30 个）：`ping`、`reload_extension`、`navigate`、`reload`、`snapshot`、`click`、`click_at`、`hover`、`type`、`press_key`、`get_text`、`probe`、`get_html`、`wait_for_response`、`scroll`、`scroll_to`、`screenshot`、`tab_list`、`tab_new`、`ensure_tab`、`tab_select`、`tab_close`、`takeover_tab`、`run_actions`、`read_console`、`read_network`、`wait`、`add_allowlist_domain`、`evaluate_script`、`request_permission`。
 
-- **read_console / read_network**：CDP 采集的 console 与网络请求元数据（响应体不采集）。缓冲从 tab 首次被工具 attach 起积累
-- **wait**：等待文本 / CSS 选择器 / URL 子串出现（页面内 Promise 轮询，默认 8s 上限 30s），超时返回 `{matched:false}` 而非报错
+- **read_console / read_network**：CDP 采集的 console 与网络请求元数据（含耗时与细分失败原因；响应体与请求头不采集，`data:` URL 不记录）。缓冲从 tab 首次被工具 attach 起积累
+- **wait_for_response**：等 URL 含指定子串（可加 status / method）的请求完成，只看元数据；默认回看 2s，「先点击再等待」无竞态
+- **probe / get_html**：按 ref / selector / 可见文本（三选一）只读探查元素——probe 回存在性、匹配数、可见性、rect、文本与白名单属性；get_html 回 outerHTML（默认 4000 字符，上限 20000）
+- **wait**：等待文本 / CSS 选择器 / URL 子串出现（页面内 Promise 轮询，默认 8s 上限 30s），或 `networkIdle:true`（连续 500ms 无新请求）；条件至多一个，只传 `timeoutMs` 即纯延迟；超时返回 `{matched:false}` 而非报错
+- **reload_extension**：仅开发态——从磁盘重新加载解压扩展（等同 `chrome://extensions` 点 ↻）并等待重连，代理可自行「构建 → 重载 → 验证」扩展代码；商店安装版本直接拒绝。不影响工具 schema：改了参数仍需重启 server 与客户端会话
+- **scroll_to**：按 ref / CSS selector / 可见文本（三选一）把元素滚到视口中央，回执滚动后的视口 rect 与 `inViewport`
+- **reload**：重新加载当前页并按 navigate 同款策略等待；`hard:true` 绕过 HTTP 缓存（验证部署，免去加随机 query 污染路由）；旧 ref 全部失效
+- **screenshot**：按 1/dpr 缩放输出，图片像素 = 视口 CSS 像素，量到的坐标可直接给 `click_at`；附带 `width/height/dpr` 文本
 - **add_allowlist_domain**：显式扩白名单（无确认窗口，直接生效）。一般无需手动调用——访问新域名会自动弹确认窗口
-- **evaluate_script**：受限 `Runtime.evaluate` 执行页面上下文 JS。黑名单拒绝网络访问（fetch/XHR/WebSocket/sendBeacon）、eval/Function、导航（location/window.open）、document.write、debugger 与 `chrome.*`；`awaitPromise:true` 需 async IIFE；结果 JSON 序列化超限截断
+- **evaluate_script**：受限 `Runtime.evaluate` 执行页面上下文 JS。黑名单拒绝网络访问（fetch/XHR/WebSocket/sendBeacon）、eval/Function、导航（location/window.open）、document.write、debugger 与 `chrome.*`；`awaitPromise:true` 需 async IIFE；结果 JSON 序列化超限截断；以用户手势执行，脚本内 `element.click()` 触发的页面 `window.open` 不会被弹窗拦截
 - **request_permission**：针对域名发起 `chrome.permissions.request` 原生授权弹窗，授予后同步写入 storage 白名单。仅当用户明确要求时调用
 - **takeover_tab**：把已打开的用户 tab 收编进受管组（`tab_list` 标 `[managed:<groupId>]` 便于识别）；仅在用户明确要求在该 tab 工作时调用，URL 必须已在白名单
 - **ensure_tab / run_actions**：见下文[标签页使用约定](#标签页使用约定)与[批量执行](#批量执行)
@@ -84,7 +90,7 @@ Chrome 扩展 · MV3 service worker / WXT
 - **snapshot**：`chrome.debugger` + CDP `Accessibility.getFullAXTree`，渲染成 Playwright ariaSnapshot 风格的缩进文本，交互元素带 `[ref=eN-<token>]`；优先用 ref 交互，减少选择器漂移。坐标点击、当前焦点输入等场景可不使用 ref
 - **ref 生命周期**：ref 绑定 tab 的最近一次快照，格式 `e<N>-<token>`（token 编码 worker 代 + 快照版本）；导航/关 tab/debugger 分离即失效；跨 worker 代或过期一律显式 `STALE_REF`（拒绝静默错点）；同代快照更替时交互工具按元素身份自动重试一次；SW 被杀后报 `NO_SNAPSHOT` 引导重新 snapshot
 - **click snapshot**：`click({ref, snapshot: true})` 点击后等两帧渲染（后台 tab 上限 300ms）再返回新快照，适合点击即重渲染、旧 ref 全部失效的页面，省一次 `snapshot` 往返；异步取数后才渲染的内容仍应先 `wait`。点击已生效但取快照失败时只提示失败、不报错，避免误重点
-- **click_at**：ref 命中不了时（iframe/Canvas/icon-only 容器）的坐标点击兜底，视口 CSS 像素，越界显式报错
+- **click_at**：ref 命中不了时（iframe/Canvas/icon-only 容器）的坐标点击兜底，视口 CSS 像素，越界显式报错；点击前 hit-test，回执落点元素与最近可交互祖先（可区分坐标偏移 / 被遮挡 / handler 无反应）
 - **press_key**：单键/组合键（`ctrl`/`alt`/`shift`/`meta` + 键名，支持 F1-F24），可选先 focus 指定 ref；派发前有默认动作探针——临时离屏输入框验证按键真的产生字符插入（监听器探针检测不出「事件送达但默认动作被丢弃」的假活，resize/失焦后的典型死法），死了自动重开焦点仿真/激活自愈，仍死显式报 `KEY_PIPELINE_DEAD`
 - **get_text**：优先读 AX value（虚拟滚动编辑器全文唯一可靠读数），innerText 兜底，上限 8KB
 - **type**：`mode="insert"`（默认）/ `mode="verbatim"`（Monaco 类编辑器逐行 insertText 还原缩进，无 trim）/ `mode="set"`（monaco `setValue` 原子写整个缓冲——绕开键盘/焦点/IME 通路，窗口失焦、键路死亡、编辑器塌缩都不影响；ref 可省，单编辑器页面自动选中）；焦点不在可编辑元素时显式报 `INPUT_NOT_LANDED` 而非静默假成功；返回插入点概要 `{line, col}` 供模型自查
