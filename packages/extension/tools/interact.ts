@@ -18,6 +18,8 @@ import {
   viewportCenter,
 } from '../lib/cdp-commands'
 import type {ClickOptions, CursorPosition, FocusState} from '../lib/cdp-commands'
+import {buildHitTestScript, parseHitTestResult} from '../lib/hit-test'
+import type {HitInfo} from '../lib/hit-test'
 import {resolveKey} from '../lib/keymap'
 import type {InputModifier} from '../lib/keymap'
 import {planVerbatim} from '../lib/verbatim'
@@ -141,8 +143,15 @@ export const clickAt: ToolHandler = async (params) => {
     ...(clickCount !== undefined ? {clickCount} : {}),
     ...(modifiers !== undefined ? {modifiers} : {}),
   }
+  // 点击前 hit-test：点击可能导航/关弹层，事后再查会落到别的元素上。反馈失败不阻断点击。
+  let hit: HitInfo | null | undefined
+  try {
+    hit = parseHitTestResult(await evaluateJson<unknown>(target.tabId, buildHitTestScript(x, y)))
+  } catch {
+    hit = undefined
+  }
   await dispatchClick(target.tabId, x, y, options)
-  return {}
+  return hit === undefined ? {} : {hit}
 }
 
 export const hover: ToolHandler = async (params) => {

@@ -291,6 +291,21 @@ export const snapshotResult = z.object({
   truncated: z.boolean(),
 })
 
+/** click_at 落点处的元素（点击前 hit-test）；hit 为 null = 坐标处无元素。 */
+export const hitInfoSchema = z.object({
+  tag: z.string(),
+  id: z.string().optional(),
+  role: z.string().optional(),
+  text: z.string(),
+  rect: z.object({x: z.number(), y: z.number(), width: z.number(), height: z.number()}),
+  interactive: z.object({tag: z.string(), role: z.string().optional(), text: z.string()}).optional(),
+  inIframe: z.boolean().optional(),
+})
+
+export const clickAtResult = z.object({
+  hit: hitInfoSchema.nullable().optional(),
+})
+
 /** snapshot 未请求时两字段均缺省；点击已生效但取快照失败时只带 snapshotError。 */
 export const clickResult = z.object({
   snapshot: snapshotResult.optional(),

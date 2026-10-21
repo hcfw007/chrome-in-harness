@@ -1,6 +1,7 @@
 /** 浏览器操作工具：navigate / snapshot / click / hover / type / press_key / scroll / screenshot / get_text。 */
 import {
   clickAtParams,
+  clickAtResult,
   clickParams,
   clickResult,
   getTextParams,
@@ -20,6 +21,7 @@ import {
   typeParams,
   typeResult,
 } from '@chrome-in-harness/protocol'
+import type {z} from 'zod'
 import {callBridge, defineTool, toolImage, toolText} from './types.js'
 import type {ToolDef} from './types.js'
 
@@ -120,15 +122,40 @@ const clickAt = defineTool({
     'Out-of-viewport coordinates fail with an explicit error (viewport metrics are re-measured per call). ' +
     'To find coordinates, first locate the element with evaluate_script, e.g. ' +
     'evaluate_script expression `(()=>{const r=document.querySelector(".some-btn").getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`, ' +
-    'then click_at with that x/y. Prefer click(ref) when a ref exists.',
+    'then click_at with that x/y. Prefer click(ref) when a ref exists. ' +
+    'The result reports the element under the point (hit-tested just before the click) and its nearest interactive ' +
+    'ancestor — check it to tell a mis-aimed or covered click from a handler that did nothing.',
   schema: clickAtParams.shape,
   async run(args, call) {
-    await callBridge(call, 'click_at', args, okResult)
+    const result = await callBridge(call, 'click_at', args, clickAtResult)
     const detail = args.button && args.button !== 'left' ? ` ${args.button}` : ''
     const count = args.clickCount && args.clickCount > 1 ? ` x${args.clickCount}` : ''
-    return toolText(`Clicked${detail}${count} at (${args.x}, ${args.y})`)
+    return toolText(`Clicked${detail}${count} at (${args.x}, ${args.y})${formatHit(result.hit)}`)
   },
 })
+
+function describeElement(tag: string, role: string | undefined, text: string, id?: string): string {
+  const idPart = id !== undefined ? `#${id}` : ''
+  const rolePart = role !== undefined ? ` role=${role}` : ''
+  const textPart = text.length > 0 ? ` "${text}"` : ''
+  return `<${tag}${idPart}${rolePart}>${textPart}`
+}
+
+/** hit 缺省 = 未能 hit-test（旧扩展或页面忙），不输出任何东西。 */
+function formatHit(hit: z.infer<typeof clickAtResult>['hit']): string {
+  if (hit === undefined) return ''
+  if (hit === null) return '\nHit: nothing at this point (empty page area — no element besides <html>/<body>)'
+  const {x, y, width, height} = hit.rect
+  let line = `\nHit: ${describeElement(hit.tag, hit.role, hit.text, hit.id)} rect=${x},${y} ${width}x${height}`
+  if (hit.inIframe === true) {
+    line += '\nNote: the point is inside an iframe; the click lands in the child frame.'
+  } else if (hit.interactive === undefined) {
+    line += '\nNote: no clickable element (button/link/role/onclick/cursor:pointer) at or above the hit.'
+  } else {
+    line += `\nInteractive target: ${describeElement(hit.interactive.tag, hit.interactive.role, hit.interactive.text)}`
+  }
+  return line
+}
 
 const type = defineTool({
   name: 'type',

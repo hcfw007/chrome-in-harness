@@ -51,18 +51,20 @@ export const evaluateScript: ToolHandler = async (rawParams) => {
 
   const timeoutMs = params.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const expression = params.expression
+  // 用户手势：脚本里 element.click() 触发的页面 window.open 等不再被弹窗拦截
+  const evalOptions = {userGesture: true}
 
   let value: unknown
   try {
     if (params.awaitPromise === true) {
       value = await withTimeout(
-        evaluateJson<unknown>(target.tabId, `(async () => { return ${expression}; })()`),
+        evaluateJson<unknown>(target.tabId, `(async () => { return ${expression}; })()`, evalOptions),
         timeoutMs,
         `evaluate_script timed out after ${timeoutMs}ms`,
       )
     } else {
       value = await withTimeout(
-        evaluateJson<unknown>(target.tabId, expression),
+        evaluateJson<unknown>(target.tabId, expression, evalOptions),
         timeoutMs,
         `evaluate_script timed out after ${timeoutMs}ms`,
       )

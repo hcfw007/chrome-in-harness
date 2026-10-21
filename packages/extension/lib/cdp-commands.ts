@@ -26,12 +26,26 @@ async function enableOnce(tabId: number, domain: string, command: string): Promi
   }
 }
 
+export interface EvaluateOptions {
+  /** 以用户手势执行：脚本内 element.click() 触发的 window.open 等需要 user activation 的行为不被拦截。 */
+  readonly userGesture?: boolean
+}
+
 /** 执行表达式并取 JSON 值；页面内异常透出为普通 Error。 */
-export async function evaluateJson<T = unknown>(tabId: number, expression: string): Promise<T> {
+export async function evaluateJson<T = unknown>(
+  tabId: number,
+  expression: string,
+  options: EvaluateOptions = {},
+): Promise<T> {
   const result = await send<{
     result?: {value?: unknown}
     exceptionDetails?: {text?: string; exception?: {description?: string}}
-  }>(tabId, 'Runtime.evaluate', {expression, returnByValue: true, awaitPromise: true})
+  }>(tabId, 'Runtime.evaluate', {
+    expression,
+    returnByValue: true,
+    awaitPromise: true,
+    ...(options.userGesture === true ? {userGesture: true} : {}),
+  })
   const details = result.exceptionDetails
   if (details !== undefined) {
     throw new Error(details.exception?.description ?? details.text ?? 'evaluate failed')

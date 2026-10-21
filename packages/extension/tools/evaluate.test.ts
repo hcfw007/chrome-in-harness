@@ -12,9 +12,10 @@ vi.mock('./access', () => ({
 
 vi.mock('../lib/cdp', () => ({ensureAttached: async () => {}}))
 
-const evaluateJson = vi.fn<(tabId: number, expression: string) => Promise<unknown>>()
+const evaluateJson = vi.fn<(tabId: number, expression: string, options?: {userGesture?: boolean}) => Promise<unknown>>()
 vi.mock('../lib/cdp-commands', () => ({
-  evaluateJson: (tabId: number, expression: string) => evaluateJson(tabId, expression),
+  evaluateJson: (tabId: number, expression: string, options?: {userGesture?: boolean}) =>
+    evaluateJson(tabId, expression, options),
 }))
 
 const {evaluateScript} = await import('./evaluate.js')
@@ -60,5 +61,12 @@ describe('evaluate_script error codes', () => {
       type: string
     }
     expect(result.type).toBe('object')
+  })
+
+  test('runs with a user gesture so page window.open from element.click() is not popup-blocked', async () => {
+    evaluateJson.mockResolvedValue(true)
+    await evaluateScript({expression: '(()=>true)()'} as never)
+    await evaluateScript({expression: '(async () => 1)()', awaitPromise: true} as never)
+    expect(evaluateJson.mock.calls.map((c) => c[2])).toEqual([{userGesture: true}, {userGesture: true}])
   })
 })

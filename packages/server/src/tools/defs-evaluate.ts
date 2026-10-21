@@ -15,6 +15,8 @@ const evaluateScript = defineTool({
     'Evaluate a restricted JavaScript expression in the page context of the managed tab and return its JSON value. ' +
     'Only read-style scripts are allowed: network access (fetch/XHR/WebSocket/sendBeacon), eval/Function, ' +
     'navigation (location/window.open), document.write, debugger and chrome.* are rejected. ' +
+    'Runs with a user gesture, so element.click() inside the script can trigger page handlers that need user ' +
+    'activation (e.g. a button that calls window.open) — still prefer click(ref) for real input events. ' +
     'Pass awaitPromise:true with an async IIFE to await a Promise; wrap the expression in (async () => ...)() yourself. ' +
     'Large results are truncated and flagged with truncated:true.',
   schema: evaluateScriptParams.shape,

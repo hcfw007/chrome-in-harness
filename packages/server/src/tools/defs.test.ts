@@ -242,6 +242,32 @@ describe('browser defs', () => {
     expect(content).toEqual([{type: 'text', text: 'Clicked right x2 at (10, 20)'}])
   })
 
+  test('click_at reports the hit element and its interactive target', async () => {
+    const fake = fakeBridge({
+      hit: {
+        tag: 'span',
+        id: 'lbl',
+        text: '保存',
+        rect: {x: 10, y: 20, width: 30, height: 12},
+        interactive: {tag: 'button', text: '保存'},
+      },
+    })
+    const content = await run(byName('click_at'), {x: 25, y: 26, coordinates: true}, fake.call)
+    expect((content[0] as {text: string}).text).toBe(
+      'Clicked at (25, 26)\nHit: <span#lbl> "保存" rect=10,20 30x12\nInteractive target: <button> "保存"',
+    )
+  })
+
+  test('click_at flags a hit with no clickable element and an empty point', async () => {
+    const plain = fakeBridge({hit: {tag: 'div', text: '', rect: {x: 0, y: 0, width: 800, height: 600}}})
+    const plainText = (await run(byName('click_at'), {x: 1, y: 1, coordinates: true}, plain.call))[0] as {text: string}
+    expect(plainText.text).toContain('Note: no clickable element')
+
+    const empty = fakeBridge({hit: null})
+    const emptyText = (await run(byName('click_at'), {x: 1, y: 1, coordinates: true}, empty.call))[0] as {text: string}
+    expect(emptyText.text).toContain('Hit: nothing at this point')
+  })
+
   test('snapshot forwards query/rootRef/limit filters', async () => {
     const fake = fakeBridge({snapshot: '- textbox "Code editor" [ref=e1]', version: 9, url: 'https://e.com', truncated: false})
     await run(byName('snapshot'), {query: 'Code editor', limit: 5000}, fake.call)
