@@ -3,6 +3,7 @@
  * 描述函数以 `function (el, ...)` 形式给出：selector/text 模式在页面内找到元素后调用，
  * ref 模式经 Runtime.callFunctionOn 以 this 绑定元素调用（见 describeNodeRect）。
  */
+import {scriptNumber} from './script-number'
 import {buildFindElementExpression} from './scroll-locate'
 import type {PageLocator} from './scroll-locate'
 
@@ -32,7 +33,8 @@ export const PROBE_ELEMENT = `function (el) {
 }`
 
 /** outerHTML 截断到 maxChars；length 报原始长度。 */
-export function buildHtmlFunction(maxChars: number): string {
+export function buildHtmlFunction(rawMaxChars: number): string {
+  const maxChars = scriptNumber('maxChars', rawMaxChars)
   return `function (el) {
   const html = el.outerHTML || ''
   return {html: html.slice(0, ${maxChars}), length: html.length, truncated: html.length > ${maxChars}}

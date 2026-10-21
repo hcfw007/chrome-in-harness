@@ -2,10 +2,12 @@
  * wait 工具：页面内条件（text / selector / urlContains / editorRendered）注入 Promise 轮询；
  * networkIdle 走 CDP 网络事件；不传条件 = 纯延迟。条件至多一个。
  */
-import {countWaitConditions, waitParamsError} from '@chrome-in-harness/protocol'
+import {countWaitConditions, waitParams} from '@chrome-in-harness/protocol'
 import {ensureAttached} from '../lib/cdp'
 import {ensureFocusEmulation, evaluateJson, waitForNetworkIdle} from '../lib/cdp-commands'
+import {scriptNumber} from '../lib/script-number'
 import {authorizeTab} from './access'
+import {parseToolParams} from './params'
 
 import type {ToolHandler} from './types'
 
@@ -50,7 +52,8 @@ const EDITOR_RENDERED_CHECK =
   '})()'
 
 /** 页面内执行的等待脚本：轮询条件，页面内 setTimeout 兜底超时。 */
-function buildWaitScript(params: WaitParams, timeoutMs: number): string {
+export function buildWaitScript(params: WaitParams, rawTimeoutMs: number): string {
+  const timeoutMs = scriptNumber('timeoutMs', rawTimeoutMs)
   const check =
     params.text !== undefined
       ? `document.body !== null && document.body.innerText.includes(${JSON.stringify(params.text)})`
@@ -73,10 +76,8 @@ function buildWaitScript(params: WaitParams, timeoutMs: number): string {
 const NETWORK_IDLE_HOLD_MS = 500
 
 export const wait: ToolHandler = async (rawParams) => {
-  const params = rawParams as WaitParams
-  // run_actions 步骤绕过 server 校验，这里再挡一次
-  const invalid = waitParamsError(params)
-  if (invalid !== undefined) throw new Error(invalid)
+  // run_actions 步骤绕过 server 校验，这里按协议 schema 再挡一次（timeoutMs 会拼进页面脚本）
+  const params: WaitParams = parseToolParams('wait', waitParams, rawParams)
   const target = await authorizeTab(params.tabId)
   await ensureAttached(target.tabId)
   await ensureFocusEmulation(target.tabId)

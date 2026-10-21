@@ -42,3 +42,11 @@ describe('parseHitTestResult', () => {
     expect(parseHitTestResult({text: 'no tag'})).toBeNull()
   })
 })
+
+describe('buildHitTestScript input guard', () => {
+  test('throws on non-number coordinates instead of interpolating them', () => {
+    expect(() => buildHitTestScript('1);0;(1' as unknown as number, 1)).toThrow(/finite number/)
+    expect(() => buildHitTestScript(1, Number.NaN)).toThrow(/finite number/)
+    expect(() => buildHitTestScript(1, Number.POSITIVE_INFINITY)).toThrow(/finite number/)
+  })
+})

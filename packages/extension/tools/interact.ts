@@ -1,5 +1,5 @@
 /** ref 交互工具：click / hover / type / press_key / scroll。ref 三态解析 + CDP 真实输入。 */
-import {locatorParamsError} from '@chrome-in-harness/protocol'
+import {clickAtParams, scrollToParams} from '@chrome-in-harness/protocol'
 import {ensureAttached} from '../lib/cdp'
 import {
   describeNodeRect,
@@ -27,6 +27,7 @@ import type {InputModifier} from '../lib/keymap'
 import {buildScrollToScript, DESCRIBE_ELEMENT, parseScrollToReceipt} from '../lib/scroll-locate'
 import {planVerbatim} from '../lib/verbatim'
 import {authorizeTab} from './access'
+import {parseToolParams} from './params'
 import {withRef} from './ref-recovery'
 import {snapshot} from './snapshot'
 
@@ -119,14 +120,8 @@ export const click: ToolHandler = async (params) => {
  * 越界坐标显式报错（现采视口度量，无任何跨调用缓存）——静默落点是第二轮战报的教训。
  */
 export const clickAt: ToolHandler = async (params) => {
-  const {x, y, tabId, button, clickCount, modifiers} = params as {
-    x: number
-    y: number
-    tabId?: number
-    button?: 'left' | 'right' | 'middle'
-    clickCount?: number
-    modifiers?: InputModifier[]
-  }
+  // run_actions 步骤绕过 server 校验：x/y 会拼进 hit-test 页面脚本，必须按 schema 校验而非 cast
+  const {x, y, tabId, button, clickCount, modifiers} = parseToolParams('click_at', clickAtParams, params)
   const target = await prepareInputTab(tabId)
   const metrics = await getViewportMetrics(target.tabId)
   if (metrics.width <= 0 || metrics.height <= 0) {
@@ -372,9 +367,7 @@ export const pressKey: ToolHandler = async (params) => {
 
 /** 定位滚动：ref / selector / text 三选一，把元素滚到视口中央并回执 rect。 */
 export const scrollTo: ToolHandler = async (params) => {
-  const raw = params as {ref?: string; selector?: string; text?: string; tabId?: number}
-  const invalid = locatorParamsError(raw)
-  if (invalid !== undefined) throw new Error(invalid)
+  const raw = parseToolParams('scroll_to', scrollToParams, params)
   const target = await authorizeTab(raw.tabId)
   await ensureAttached(target.tabId)
 

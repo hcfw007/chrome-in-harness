@@ -1,10 +1,12 @@
 /** read_console / read_network 工具：从环形缓冲读取采集结果。 */
+import {waitForResponseParams} from '@chrome-in-harness/protocol'
 import {ensureAttached} from '../lib/cdp'
 import {ensureCollectors} from '../lib/cdp-commands'
 import {consoleBuffer} from '../lib/console-buffer'
 import {networkBuffer} from '../lib/network-buffer'
 import type {NetworkEntry} from '../lib/network-buffer'
 import {authorizeTab} from './access'
+import {parseToolParams} from './params'
 
 import type {ToolHandler} from './types'
 
@@ -49,14 +51,8 @@ const DEFAULT_LOOKBACK_MS = 2_000
  * 回看窗口覆盖「点击触发请求 → 再调 wait」之间已经完成的情况。
  */
 export const waitForResponse: ToolHandler = async (rawParams) => {
-  const params = rawParams as {
-    urlContains: string
-    status?: number
-    method?: string
-    timeoutMs?: number
-    lookbackMs?: number
-    tabId?: number
-  }
+  // 必须在授权前校验：非数字 / 超上限的 timeoutMs 会让 deadline 永不到达，轮询在 SW 里无限进行
+  const params = parseToolParams('wait_for_response', waitForResponseParams, rawParams)
   const target = await authorizeTab(params.tabId)
   await ensureAttached(target.tabId)
   ensureCollectors(target.tabId)

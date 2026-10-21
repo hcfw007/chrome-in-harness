@@ -3,6 +3,7 @@
  * 点击前在页面内按坐标做 hit-test，告诉调用方「这一击会落在哪个元素上」，
  * 让坐标偏移 / 被遮挡 / 点到容器空白处这几类失败可以自证。
  */
+import {scriptNumber} from './script-number'
 
 export interface HitInfo {
   readonly tag: string
@@ -19,7 +20,9 @@ export interface HitInfo {
 const TEXT_MAX = 80
 
 /** 页面内只读脚本：elementFromPoint（穿透开放 shadow root）+ 可交互祖先 + rect。 */
-export function buildHitTestScript(x: number, y: number): string {
+export function buildHitTestScript(rawX: number, rawY: number): string {
+  const x = scriptNumber('x', rawX)
+  const y = scriptNumber('y', rawY)
   return `(() => {
     const clip = (s) => (s || '').trim().replace(/\\s+/g, ' ').slice(0, ${TEXT_MAX})
     let el = document.elementFromPoint(${x}, ${y})

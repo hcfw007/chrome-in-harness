@@ -1,5 +1,5 @@
 import {describe, expect, test} from 'vitest'
-import {buildGetHtmlScript, buildProbeScript, parseHtmlResult, parseProbeResult} from './element-inspect.js'
+import {buildGetHtmlScript, buildHtmlFunction, buildProbeScript, parseHtmlResult, parseProbeResult} from './element-inspect.js'
 import {describeLoadingFailure} from './network-buffer.js'
 
 describe('probe / get_html scripts', () => {
@@ -62,5 +62,14 @@ describe('describeLoadingFailure', () => {
     expect(describeLoadingFailure({corsErrorStatus: {corsError: 'MissingAllowOriginHeader'}})).toBe('cors:MissingAllowOriginHeader')
     expect(describeLoadingFailure({errorText: 'net::ERR_CONNECTION_REFUSED'})).toBe('net::ERR_CONNECTION_REFUSED')
     expect(describeLoadingFailure({})).toBe('failed')
+  })
+})
+
+describe('get_html maxChars guard', () => {
+  test('buildHtmlFunction / buildGetHtmlScript throw on non-number maxChars', () => {
+    expect(() => buildHtmlFunction('1);0;(1' as unknown as number)).toThrow(/finite number/)
+    expect(() => buildGetHtmlScript({selector: 'a'}, '1);0;(1' as unknown as number)).toThrow(/finite number/)
+    expect(() => buildHtmlFunction(Number.NaN)).toThrow(/finite number/)
+    expect(buildHtmlFunction(100)).toContain('html.slice(0, 100)')
   })
 })

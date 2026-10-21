@@ -1,5 +1,5 @@
 /** probe / get_html：按 ref / selector / text 读元素状态与 outerHTML（只读，不滚动不点击）。 */
-import {GET_HTML_DEFAULT_CHARS, locatorParamsError} from '@chrome-in-harness/protocol'
+import {GET_HTML_DEFAULT_CHARS, getHtmlParams, probeParams} from '@chrome-in-harness/protocol'
 import {ensureAttached} from '../lib/cdp'
 import {describeNodeRect, evaluateJson} from '../lib/cdp-commands'
 import {
@@ -11,6 +11,7 @@ import {
   parseProbeResult,
 } from '../lib/element-inspect'
 import {authorizeTab} from './access'
+import {parseToolParams} from './params'
 import {withRef} from './ref-recovery'
 
 import type {ToolHandler} from './types'
@@ -27,9 +28,8 @@ function describeLocator(params: LocatorParams): string {
   return `text ${JSON.stringify(params.text)}`
 }
 
+/** 调用方须先经 parseToolParams 校验（maxChars / selector 会拼进页面脚本）。 */
 async function prepare(params: LocatorParams): Promise<number> {
-  const invalid = locatorParamsError(params)
-  if (invalid !== undefined) throw new Error(invalid)
   const target = await authorizeTab(params.tabId)
   await ensureAttached(target.tabId)
   return target.tabId
@@ -37,7 +37,7 @@ async function prepare(params: LocatorParams): Promise<number> {
 
 /** 不存在不是错误：exists:false 本身就是 probe 要回答的问题。ref 失效则照常报 STALE_REF。 */
 export const probe: ToolHandler = async (rawParams) => {
-  const params = rawParams as LocatorParams
+  const params: LocatorParams = parseToolParams('probe', probeParams, rawParams)
   const tabId = await prepare(params)
   const raw =
     params.ref !== undefined
@@ -47,7 +47,7 @@ export const probe: ToolHandler = async (rawParams) => {
 }
 
 export const getHtml: ToolHandler = async (rawParams) => {
-  const params = rawParams as LocatorParams & {maxChars?: number}
+  const params: LocatorParams & {maxChars?: number} = parseToolParams('get_html', getHtmlParams, rawParams)
   const tabId = await prepare(params)
   const maxChars = params.maxChars ?? GET_HTML_DEFAULT_CHARS
   const raw =
