@@ -1,14 +1,16 @@
 import {addAllowlistDomain} from './allowlist'
 import {runActions} from './batch'
-import {readConsole, readNetwork} from './debug'
+import {readConsole, readNetwork, waitForResponse} from './debug'
 import {evaluateScript} from './evaluate'
 import {getText} from './get-text'
-import {click, clickAt, hover, pressKey, scroll, typeText} from './interact'
+import {getHtml, probe} from './inspect'
+import {click, clickAt, hover, pressKey, scroll, scrollTo, typeText} from './interact'
 import {ping} from './ping'
 import {invoke, register} from './registry'
+import {reloadExtension} from './reload-extension'
 import {requestPermission} from './request-permission'
 import {screenshot} from './screenshot'
-import {navigate, snapshot} from './snapshot'
+import {navigate, reload, snapshot} from './snapshot'
 import {ensureTab, tabClose, tabList, tabNew, tabSelect, takeoverTab} from './tabs'
 import {wait} from './wait'
 
@@ -41,3 +43,9 @@ register('evaluate_script', evaluateScript)
 register('request_permission', requestPermission)
 register('get_text', getText)
 register('run_actions', runActions)
+register('scroll_to', scrollTo)
+register('reload', reload)
+register('reload_extension', reloadExtension)
+register('probe', probe)
+register('get_html', getHtml)
+register('wait_for_response', waitForResponse)

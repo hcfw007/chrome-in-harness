@@ -6,7 +6,10 @@ import {
   readConsoleResult,
   readNetworkParams,
   readNetworkResult,
+  waitForResponseParams,
+  waitForResponseResult,
 } from '@chrome-in-harness/protocol'
+import type {z} from 'zod'
 import {callBridge, defineTool, toolText} from './types.js'
 import type {ToolDef} from './types.js'
 
@@ -30,18 +33,49 @@ const readNetwork = defineTool({
   name: 'read_network',
   title: 'Read captured network requests',
   description:
-    'Read captured network request metadata (method, URL, status, MIME type, failure reason), newest first. ' +
-    'Response bodies are never captured. Buffering starts when the tab is first attached by a tool call. ' +
+    'Read captured network request metadata (method, URL, status, MIME type, duration, failure reason), newest first. ' +
+    'Response bodies and headers are never captured; inline data: URLs are skipped. ' +
+    'Failure reasons distinguish canceled / blocked:<reason> / cors:<error> / net::ERR_*; "pending" means no response yet. ' +
+    'Buffering starts when the tab is first attached by a tool call. ' +
     'Pass urlFilter to keep only requests whose URL contains the substring.',
   schema: readNetworkParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'read_network', args, readNetworkResult)
     if (result.entries.length === 0) return toolText('No network requests captured.')
-    const lines = result.entries.map((e) => {
-      const status = e.error !== undefined ? `ERR ${e.error}` : `${e.status ?? '?'} ${e.mimeType ?? ''}`
-      return `${e.method} ${e.url} → ${status.trim()}`
-    })
-    return toolText(lines.join('\n'))
+    return toolText(result.entries.map(formatNetworkEntry).join('\n'))
+  },
+})
+
+type NetworkEntry = z.infer<typeof readNetworkResult>['entries'][number]
+
+export function formatNetworkEntry(e: NetworkEntry): string {
+  const outcome =
+    e.error !== undefined
+      ? `ERR ${e.error}`
+      : e.status === undefined
+        ? 'pending'
+        : `${e.status}${e.mimeType !== undefined && e.mimeType.length > 0 ? ` ${e.mimeType}` : ''}`
+  const duration = e.durationMs !== undefined ? ` (${e.durationMs}ms)` : ''
+  return `${e.method} ${e.url} → ${outcome}${duration}`
+}
+
+const waitForResponse = defineTool({
+  name: 'wait_for_response',
+  title: 'Wait for a network request to complete',
+  description:
+    'Wait until a request whose URL contains urlContains completes (optionally with a given status / method), ' +
+    'e.g. after clicking a button that triggers an API call. Metadata only — the response body is never read. ' +
+    'lookbackMs (default 2000) also accepts a match that completed just before this call, so click-then-wait is race-free; ' +
+    'set 0 to wait only for future requests. Returns {matched, timedOut, entry}; a timeout is not an error.',
+  schema: waitForResponseParams.shape,
+  async run(args, call) {
+    const result = await callBridge(call, 'wait_for_response', args, waitForResponseResult)
+    if (result.matched && result.entry !== undefined) return toolText(`Matched: ${formatNetworkEntry(result.entry)}`)
+    const filters = [args.method, args.status].filter((v) => v !== undefined).join(' ')
+    return toolText(
+      `Timed out: no ${filters.length > 0 ? `${filters} ` : ''}request matching ${JSON.stringify(args.urlContains)} completed. ` +
+        'Check read_network for what was actually sent.',
+    )
   },
 })
 
@@ -59,6 +93,6 @@ const addAllowlistDomain = defineTool({
   },
 })
 
-export const DEBUG_TOOL_DEFS: readonly ToolDef[] = [readConsole, readNetwork, addAllowlistDomain]
+export const DEBUG_TOOL_DEFS: readonly ToolDef[] = [readConsole, readNetwork, waitForResponse, addAllowlistDomain]
 
 export type {ToolDef}

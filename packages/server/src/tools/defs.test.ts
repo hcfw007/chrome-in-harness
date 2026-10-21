@@ -4,7 +4,8 @@ import {BATCH_TOOL_DEFS} from './defs-batch.js'
 import {BROWSER_TOOL_DEFS} from './defs-browser.js'
 import {DEBUG_TOOL_DEFS} from './defs-debug.js'
 import {EVALUATE_TOOL_DEFS} from './defs-evaluate.js'
-import {TAB_TOOL_DEFS} from './defs-tabs.js'
+import {TAB_TOOL_DEFS, waitForFreshExtension} from './defs-tabs.js'
+import {formatError} from './types.js'
 import type {BridgeCall, ToolDef} from './types.js'
 
 function fakeBridge(result: unknown | Error): {call: BridgeCall; received: Array<{tool: string; params: unknown}>} {
@@ -39,6 +40,50 @@ describe('tool name uniqueness', () => {
 
   test('server exposes exactly the shared tool name contract (no dropped tools)', () => {
     expect([...ALL].map((def) => def.name).sort()).toEqual([...TOOL_NAMES].sort())
+  })
+})
+
+describe('formatError', () => {
+  test('passes the coded message through without an "Error: " prefix (clients add their own)', () => {
+    expect(formatError(new Error('STALE_REF: ref e1 is stale — snapshot again'))).toEqual([
+      {type: 'text', text: 'STALE_REF: ref e1 is stale — snapshot again'},
+    ])
+    expect(formatError('plain')).toEqual([{type: 'text', text: 'plain'}])
+  })
+})
+
+describe('reload_extension def', () => {
+  /** 按调用顺序返回预设结果的桥：ping 依次给出 startedAt 序列。 */
+  function scriptedBridge(pings: Array<unknown | Error>) {
+    const received: string[] = []
+    const call: BridgeCall = async (tool) => {
+      received.push(tool)
+      if (tool === 'reload_extension') return {reloading: true, version: '0.3.0'}
+      const next = pings.shift()
+      if (next instanceof Error) throw next
+      return next
+    }
+    return {call, received}
+  }
+
+  test('waitForFreshExtension resolves once ping reports a new startedAt, skipping disconnects', async () => {
+    const {call} = scriptedBridge([
+      new Error('Chrome extension not connected'),
+      {version: '0.3.0', userAgent: 'x', startedAt: 100},
+      {version: '0.3.0', userAgent: 'x', startedAt: 200},
+    ])
+    const fresh = await waitForFreshExtension(call, 100, 5_000, async () => {})
+    expect(fresh).toEqual({reconnected: true, startedAt: 200})
+  })
+
+  test('waitForFreshExtension accepts any reconnect when the old extension had no startedAt', async () => {
+    const {call} = scriptedBridge([{version: '0.3.0', userAgent: 'x'}])
+    await expect(waitForFreshExtension(call, undefined, 5_000, async () => {})).resolves.toEqual({reconnected: true})
+  })
+
+  test('waitForFreshExtension gives up after the timeout', async () => {
+    const {call} = scriptedBridge(Array.from({length: 50}, () => new Error('not connected')))
+    await expect(waitForFreshExtension(call, 1, 0, async () => {})).resolves.toEqual({reconnected: false})
   })
 })
 
@@ -135,16 +180,131 @@ describe('browser defs', () => {
     await expect(run(byName('click'), {ref: 'e1'}, fake.call)).rejects.toThrow('STALE_REF')
   })
 
-  test('wait rejects zero or multiple conditions before calling the bridge', async () => {
+  test('wait rejects multiple conditions, or no condition without timeoutMs, before calling the bridge', async () => {
     const fake = fakeBridge({matched: true, timedOut: false})
-    await expect(run(byName('wait'), {}, fake.call)).rejects.toThrow('exactly one')
+    await expect(run(byName('wait'), {}, fake.call)).rejects.toThrow('only timeoutMs for a plain delay')
     await expect(
       run(byName('wait'), {text: 'a', selector: '#x'}, fake.call),
-    ).rejects.toThrow('exactly one')
+    ).rejects.toThrow('at most one')
     await expect(
-      run(byName('wait'), {editorRendered: true, urlContains: '/x'}, fake.call),
-    ).rejects.toThrow('exactly one')
+      run(byName('wait'), {networkIdle: true, urlContains: '/x'}, fake.call),
+    ).rejects.toThrow('at most one')
     expect(fake.received).toHaveLength(0)
+  })
+
+  test('wait with only timeoutMs is a plain delay', async () => {
+    const fake = fakeBridge({matched: true, timedOut: false})
+    const content = await run(byName('wait'), {timeoutMs: 1500}, fake.call)
+    expect(fake.received).toEqual([{tool: 'wait', params: {timeoutMs: 1500}}])
+    expect(content).toEqual([{type: 'text', text: 'Waited 1500ms.'}])
+  })
+
+  test('wait networkIdle reports idle or timeout', async () => {
+    const idle = await run(byName('wait'), {networkIdle: true}, fakeBridge({matched: true, timedOut: false}).call)
+    expect(idle).toEqual([{type: 'text', text: 'Network idle.'}])
+    const busy = await run(byName('wait'), {networkIdle: true}, fakeBridge({matched: false, timedOut: true}).call)
+    expect((busy[0] as {text: string}).text).toContain('Timed out')
+  })
+
+  test('scroll_to requires exactly one locator and renders the receipt', async () => {
+    const fake = fakeBridge({rect: {x: 10, y: 300, width: 80, height: 20}, inViewport: true, tag: 'button', text: '导出'})
+    await expect(run(byName('scroll_to'), {}, fake.call)).rejects.toThrow('exactly one of ref / selector / text')
+    await expect(run(byName('scroll_to'), {ref: 'e1', text: 'x'}, fake.call)).rejects.toThrow('got 2')
+    const content = await run(byName('scroll_to'), {text: '导出'}, fake.call)
+    expect(fake.received).toEqual([{tool: 'scroll_to', params: {text: '导出'}}])
+    expect(content).toEqual([{type: 'text', text: 'Scrolled to <button> "导出" rect=10,300 80x20 — in viewport'}])
+  })
+
+  test('probe renders found elements with rect, visibility, match count and attrs', async () => {
+    const fake = fakeBridge({
+      exists: true,
+      count: 3,
+      visible: true,
+      inViewport: false,
+      rect: {x: 10, y: 1400, width: 80, height: 24},
+      tag: 'button',
+      text: '导出',
+      attrs: {class: 'ant-btn', disabled: ''},
+    })
+    const content = await run(byName('probe'), {selector: '.ant-btn'}, fake.call)
+    expect((content[0] as {text: string}).text).toBe(
+      '<button> "导出" — first of 3 matches\nrect=10,1400 80x24 — visible, outside viewport\nattrs: class="ant-btn" disabled=""',
+    )
+  })
+
+  test('probe reports a missing element without erroring, and validates the locator', async () => {
+    const fake = fakeBridge({exists: false, count: 0})
+    const content = await run(byName('probe'), {selector: '#nope'}, fake.call)
+    expect(content).toEqual([{type: 'text', text: 'Not found (0 matches for "#nope").'}])
+    await expect(run(byName('probe'), {}, fake.call)).rejects.toThrow('exactly one of ref / selector / text')
+  })
+
+  test('get_html flags truncation with the original length', async () => {
+    const fake = fakeBridge({html: '<div class="x">', length: 9000, truncated: true})
+    const content = await run(byName('get_html'), {selector: '.x', maxChars: 15}, fake.call)
+    expect(fake.received[0]).toEqual({tool: 'get_html', params: {selector: '.x', maxChars: 15}})
+    expect((content[0] as {text: string}).text).toContain('TRUNCATED: showing 15 of 9000 chars')
+  })
+
+  test('wait_for_response renders the matched entry or a timeout hint', async () => {
+    const hit = fakeBridge({
+      matched: true,
+      timedOut: false,
+      entry: {method: 'POST', url: 'https://a.com/api/sync', status: 500, mimeType: 'application/json', timestamp: 1, durationMs: 42},
+    })
+    const ok = await run(byName('wait_for_response'), {urlContains: '/api/sync'}, hit.call)
+    expect(ok).toEqual([{type: 'text', text: 'Matched: POST https://a.com/api/sync → 500 application/json (42ms)'}])
+
+    const miss = fakeBridge({matched: false, timedOut: true})
+    const timeout = await run(byName('wait_for_response'), {urlContains: '/api/sync', method: 'POST', status: 200}, miss.call)
+    expect((timeout[0] as {text: string}).text).toContain('no POST 200 request matching "/api/sync"')
+  })
+
+  test('read_network shows durations and pending requests', async () => {
+    const fake = fakeBridge({
+      entries: [
+        {method: 'GET', url: 'https://a.com/slow', timestamp: 2},
+        {method: 'GET', url: 'https://a.com/x', status: 200, mimeType: 'text/html', timestamp: 1, durationMs: 120},
+        {method: 'POST', url: 'https://a.com/y', error: 'cors:MissingAllowOriginHeader', timestamp: 0, durationMs: 8},
+      ],
+    })
+    const content = await run(byName('read_network'), {}, fake.call)
+    expect((content[0] as {text: string}).text).toBe(
+      'GET https://a.com/slow → pending\nGET https://a.com/x → 200 text/html (120ms)\nPOST https://a.com/y → ERR cors:MissingAllowOriginHeader (8ms)',
+    )
+  })
+
+  test('reload forwards hard and reports cache bypass', async () => {
+    const fake = fakeBridge({url: 'https://e.com/a', title: 'A', loaded: true, hard: true})
+    const content = await run(byName('reload'), {hard: true}, fake.call)
+    expect(fake.received).toEqual([{tool: 'reload', params: {hard: true}}])
+    expect(content).toEqual([{type: 'text', text: 'Hard-reloaded (cache bypassed) https://e.com/a — "A"'}])
+  })
+
+  test('screenshot tells the agent to divide by dpr when downscaling fell back to device pixels', async () => {
+    const fake = fakeBridge({data: 'aGVsbG8=', mimeType: 'image/png', width: 1280, height: 720, dpr: 2, scale: 1})
+    const content = await run(byName('screenshot'), {}, fake.call)
+    expect((content[1] as {text: string}).text).toBe(
+      'Viewport 1280x720 CSS px, dpr 2; image px = DEVICE px (downscaling was unavailable) — ' +
+        'divide coordinates measured on the image by 2 before passing them to click_at.',
+    )
+  })
+
+  test('screenshot at dpr 1 needs no conversion', async () => {
+    const fake = fakeBridge({data: 'aGVsbG8=', mimeType: 'image/png', width: 1280, height: 720, dpr: 1, scale: 1})
+    const content = await run(byName('screenshot'), {}, fake.call)
+    expect((content[1] as {text: string}).text).toBe(
+      'Viewport 1280x720 CSS px, dpr 1; image px = CSS px — use these coordinates with click_at.',
+    )
+  })
+
+  test('screenshot appends viewport metrics when the extension reports them', async () => {
+    const fake = fakeBridge({data: 'aGVsbG8=', mimeType: 'image/png', width: 1280, height: 720, dpr: 2, scale: 0.5})
+    const content = await run(byName('screenshot'), {}, fake.call)
+    expect(content[0]).toEqual({type: 'image', data: 'aGVsbG8=', mimeType: 'image/png'})
+    expect((content[1] as {text: string}).text).toBe(
+      'Viewport 1280x720 CSS px, dpr 2; image px = CSS px (downscaled from dpr 2) — use these coordinates with click_at.',
+    )
   })
 
   test('wait forwards editorRendered and renders matched', async () => {
@@ -242,6 +402,32 @@ describe('browser defs', () => {
     expect(content).toEqual([{type: 'text', text: 'Clicked right x2 at (10, 20)'}])
   })
 
+  test('click_at reports the hit element and its interactive target', async () => {
+    const fake = fakeBridge({
+      hit: {
+        tag: 'span',
+        id: 'lbl',
+        text: '保存',
+        rect: {x: 10, y: 20, width: 30, height: 12},
+        interactive: {tag: 'button', text: '保存'},
+      },
+    })
+    const content = await run(byName('click_at'), {x: 25, y: 26, coordinates: true}, fake.call)
+    expect((content[0] as {text: string}).text).toBe(
+      'Clicked at (25, 26)\nHit: <span#lbl> "保存" rect=10,20 30x12\nInteractive target: <button> "保存"',
+    )
+  })
+
+  test('click_at flags a hit with no clickable element and an empty point', async () => {
+    const plain = fakeBridge({hit: {tag: 'div', text: '', rect: {x: 0, y: 0, width: 800, height: 600}}})
+    const plainText = (await run(byName('click_at'), {x: 1, y: 1, coordinates: true}, plain.call))[0] as {text: string}
+    expect(plainText.text).toContain('Note: no clickable element')
+
+    const empty = fakeBridge({hit: null})
+    const emptyText = (await run(byName('click_at'), {x: 1, y: 1, coordinates: true}, empty.call))[0] as {text: string}
+    expect(emptyText.text).toContain('Hit: nothing at this point')
+  })
+
   test('snapshot forwards query/rootRef/limit filters', async () => {
     const fake = fakeBridge({snapshot: '- textbox "Code editor" [ref=e1]', version: 9, url: 'https://e.com', truncated: false})
     await run(byName('snapshot'), {query: 'Code editor', limit: 5000}, fake.call)
@@ -305,8 +491,22 @@ describe('tab defs', () => {
     const content = await run(byName('takeover_tab'), {tabId: 4}, fake.call)
     expect(fake.received[0]).toEqual({tool: 'takeover_tab', params: {tabId: 4}})
     expect(content).toEqual([
-      {type: 'text', text: 'Tab 4 is now managed (https://leetcode.com/problems/two-sum/).'},
+      {
+        type: 'text',
+        text: 'Tab 4 is now managed (https://leetcode.com/problems/two-sum/). Focus and URL were not changed.',
+      },
     ])
+  })
+
+  test('takeover_tab warns when the tab is the one the user is viewing, and reports no-ops', async () => {
+    const viewing = fakeBridge({tabId: 4, url: 'https://a.com/', alreadyManaged: false, active: true})
+    const text = ((await run(byName('takeover_tab'), {tabId: 4}, viewing.call))[0] as {text: string}).text
+    expect(text).toContain('the tab the user is currently viewing')
+    expect(text).toContain('Pass tabId explicitly')
+
+    const noop = fakeBridge({tabId: 4, url: 'https://a.com/', alreadyManaged: true, active: false})
+    const noopText = ((await run(byName('takeover_tab'), {tabId: 4}, noop.call))[0] as {text: string}).text
+    expect(noopText).toBe('Tab 4 was already managed (https://a.com/); nothing changed.')
   })
 })
 

@@ -70,6 +70,45 @@ describe('NetworkBuffer', () => {
     expect(buf.read(1, 'https://example').map((e) => e.url)).toEqual(['https://example.com/'])
   })
 
+  test('skips data: URLs entirely', () => {
+    const buf = new NetworkBuffer()
+    buf.recordRequest(1, 'img', 'GET', 'data:image/png;base64,AAAA', 1)
+    buf.recordResponse(1, 'img', 200, 'image/png', 1.1)
+    expect(buf.read(1)).toEqual([])
+  })
+
+  test('computes duration from CDP second timestamps', () => {
+    const buf = new NetworkBuffer()
+    buf.recordRequest(1, 'r1', 'GET', 'https://a.com/x', 100.0)
+    buf.recordResponse(1, 'r1', 200, 'application/json', 100.25)
+    buf.recordRequest(1, 'r2', 'GET', 'https://a.com/y', 100.0)
+    buf.recordFailure(1, 'r2', 'canceled', 100.5)
+    buf.recordRequest(1, 'r3', 'GET', 'https://a.com/z', 100.0)
+    buf.recordResponse(1, 'r3', 200, undefined)
+    const byUrl = new Map(buf.read(1).map((e) => [e.url, e.durationMs]))
+    expect(byUrl.get('https://a.com/x')).toBe(250)
+    expect(byUrl.get('https://a.com/y')).toBe(500)
+    expect(byUrl.get('https://a.com/z')).toBeUndefined()
+  })
+
+  test('findCompleted honors since / method / status and ignores pending requests', () => {
+    let clock = 1_000
+    const buf = new NetworkBuffer(500, () => clock)
+    buf.recordRequest(1, 'old', 'POST', 'https://a.com/api/sync', 1)
+    buf.recordResponse(1, 'old', 200, 'application/json', 1.1)
+    clock = 5_000
+    buf.recordRequest(1, 'pending', 'POST', 'https://a.com/api/sync', 2)
+    buf.recordRequest(1, 'get', 'GET', 'https://a.com/api/sync', 3)
+    buf.recordResponse(1, 'get', 200, 'application/json', 3.1)
+    buf.recordRequest(1, 'err', 'POST', 'https://a.com/api/sync', 4)
+    buf.recordResponse(1, 'err', 500, 'application/json', 4.1)
+
+    expect(buf.findCompleted(1, {urlContains: '/api/sync', since: 4_000})?.method).toBe('GET')
+    expect(buf.findCompleted(1, {urlContains: '/api/sync', method: 'post', since: 4_000})?.status).toBe(500)
+    expect(buf.findCompleted(1, {urlContains: '/api/sync', method: 'POST', status: 200, since: 4_000})).toBeUndefined()
+    expect(buf.findCompleted(1, {urlContains: '/api/sync', method: 'POST', status: 200, since: 0})?.status).toBe(200)
+  })
+
   test('wraps at capacity and clears per tab', () => {
     const buf = new NetworkBuffer(3)
     for (let i = 1; i <= 5; i += 1) {

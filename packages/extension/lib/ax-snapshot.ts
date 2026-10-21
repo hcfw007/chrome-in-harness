@@ -29,6 +29,8 @@ const WEAK_ELIGIBLE_ROLES = new Set(['generic', 'none', 'image', 'listitem'])
 const POPUP_ROLES = new Set(['dialog', 'alertdialog', 'menu', 'listbox'])
 /** 弹出层内可给弱 ref 的角色（StaticText 保持 CDP 原样大小写）。 */
 const POPUP_TEXT_ROLES = new Set([...WEAK_ELIGIBLE_ROLES, 'StaticText'])
+/** 只含空白、零宽字符或私用区字形（图标字体）的文本：对定位没有信息量。 */
+const GLYPH_ONLY = /^[\s\u200B-\u200D\u2060\uFEFF\uE000-\uF8FF]*$/u
 /** query 模式纯文本命中的输出上限（超出报数，绝不挤占交互命中预算）。 */
 const MAX_QUERY_TEXT_HITS = 40
 
@@ -90,10 +92,41 @@ function isRefCandidate(node: AxNode): boolean {
   )
 }
 
-/** 弱交互判定上下文：DOM 扫描候选 + 弹出层归属表（nodeId → 在弹出容器子树内）。 */
+/** 弱交互判定上下文：DOM 扫描候选 + 弹出层归属表 + 「后代里有强交互控件」表。 */
 interface WeakContext {
   readonly candidates: ReadonlyMap<number, WeakInfo> | undefined
   readonly popup: ReadonlyMap<string, boolean>
+  /** nodeId → 后代（不含自身）里存在强交互控件（button/textbox/combobox… 或 clickable/haspopup）。 */
+  readonly strongBelow: ReadonlyMap<string, boolean>
+}
+
+/** 强交互：真正的控件。不含 heading/img 这类锚点——图标包装层的点击就是要落到包装层上。 */
+function isStrongInteractive(node: AxNode): boolean {
+  return INTERACTIVE_ROLES.has(node.role) || node.clickable || node.hasPopup
+}
+
+function buildStrongBelowMap(byId: ReadonlyMap<string, AxNode>): ReadonlyMap<string, boolean> {
+  const memo = new Map<string, boolean>()
+  /** node 自身或任一后代是强交互控件；带 memo 的后序遍历。 */
+  const hasStrong = (node: AxNode): boolean => {
+    const cached = memo.get(node.nodeId)
+    if (cached !== undefined) return cached
+    memo.set(node.nodeId, false) // 防环
+    const result = isStrongInteractive(node) || node.childIds.some((id) => {
+      const child = byId.get(id)
+      return child !== undefined && hasStrong(child)
+    })
+    memo.set(node.nodeId, result)
+    return result
+  }
+  const below = new Map<string, boolean>()
+  for (const node of byId.values()) {
+    below.set(node.nodeId, node.childIds.some((id) => {
+      const child = byId.get(id)
+      return child !== undefined && hasStrong(child)
+    }))
+  }
+  return below
 }
 
 /** memo 化收集：nodeId → 自身是弹出容器或任一祖先是（只存 true，缺席即不在弹出层内）。 */
@@ -122,12 +155,17 @@ function buildWeakContext(
   byId: ReadonlyMap<string, AxNode>,
   candidates: ReadonlyMap<number, WeakInfo> | undefined,
 ): WeakContext {
-  return {candidates, popup: buildPopupMap(byId)}
+  return {candidates, popup: buildPopupMap(byId), strongBelow: buildStrongBelowMap(byId)}
 }
 
-/** 弱交互：无强信号但可点（DOM 扫描命中 / 弹出层内带名文本 / focusable 的 div/li/span 映射角色）。 */
+/**
+ * 弱交互：无强信号但可点（DOM 扫描命中 / 弹出层内带名文本 / focusable 的 div/li/span 映射角色）。
+ * 无名且后代已有强交互控件的包装层不算——antd 的下拉/输入框外面常套两层 cursor:pointer 的 div，
+ * 真正可点的是里面的 combobox/textbox，包装层的 ref 只是噪音（点它与点里面的控件效果相同）。
+ */
 function isWeakCandidate(node: AxNode, ctx: WeakContext): boolean {
   if (isRefCandidate(node)) return false
+  if (node.name.length === 0 && ctx.strongBelow.get(node.nodeId) === true) return false
   if (node.backendDOMNodeId !== undefined && ctx.candidates?.has(node.backendDOMNodeId) === true) return true
   if (
     ctx.popup.get(node.nodeId) === true &&
@@ -204,6 +242,24 @@ function renderLine(node: AxNode, depth: number, state: RenderState, weak: boole
   state.charCount += line.length + 1
 }
 
+/**
+ * 纯冗余文本：InlineTextBox（StaticText 的排版分片，名字逐字重复）一律不渲染；
+ * 与父节点同名的 StaticText（button "保存" > StaticText "保存"）也不渲染。
+ * 两者都只重复上一行的信息，却能吃掉近一半字符预算。
+ */
+function isNoiseText(node: AxNode, parentName: string, ctx: WeakContext): boolean {
+  if (node.role === 'InlineTextBox') return true
+  // 图标字体（iconfont 等）的文字落在 Unicode 私用区，渲染成看不见的 StaticText ""
+  if (node.role === 'StaticText' && GLYPH_ONLY.test(node.name) && !isWeakCandidate(node, ctx)) return true
+  return (
+    node.role === 'StaticText' &&
+    parentName.length > 0 &&
+    node.name === parentName &&
+    !isRefCandidate(node) &&
+    !isWeakCandidate(node, ctx)
+  )
+}
+
 /** 该节点子树里是否藏着 ref 候选（含弱交互）；带 memo 的后序遍历。 */
 function buildSubtreeHasRef(byId: ReadonlyMap<string, AxNode>, ctx: WeakContext): ReadonlyMap<string, boolean> {
   const memo = new Map<string, boolean>()
@@ -251,13 +307,14 @@ function runRenderPass(
     essentials,
   }
 
-  const dfs = (node: AxNode, depth: number): void => {
+  const dfs = (node: AxNode, depth: number, parentName: string): void => {
     if (state.truncated) return
+    if (isNoiseText(node, parentName, ctx)) return
     if (node.ignored) {
       // ignored 节点不渲染自身，但语义子节点可能藏在下面 —— 子级提升到同深度继续遍历
       for (const childId of node.childIds) {
         const child = byId.get(childId)
-        if (child !== undefined) dfs(child, depth)
+        if (child !== undefined) dfs(child, depth, parentName)
       }
       return
     }
@@ -269,14 +326,14 @@ function runRenderPass(
     if (isCollapsible(node, ctx)) {
       for (const childId of node.childIds) {
         const child = byId.get(childId)
-        if (child !== undefined) dfs(child, depth)
+        if (child !== undefined) dfs(child, depth, parentName)
       }
       return
     }
     if (isGhostContainer(node, ctx)) {
       for (const childId of node.childIds) {
         const child = byId.get(childId)
-        if (child !== undefined) dfs(child, depth + 1)
+        if (child !== undefined) dfs(child, depth + 1, parentName)
       }
       return
     }
@@ -293,11 +350,11 @@ function runRenderPass(
     state.visitedNodes += 1
     for (const childId of node.childIds) {
       const child = byId.get(childId)
-      if (child !== undefined) dfs(child, depth + 1)
+      if (child !== undefined) dfs(child, depth + 1, node.name)
     }
   }
 
-  for (const root of roots) dfs(root, 0)
+  for (const root of roots) dfs(root, 0, '')
   return state
 }
 
@@ -309,6 +366,7 @@ function collectQueryHits(
 ): AxNode[] {
   const hits: AxNode[] = []
   const visit = (node: AxNode): void => {
+    if (node.role === 'InlineTextBox') return
     if (!node.ignored) {
       let self: boolean
       try {
@@ -410,7 +468,9 @@ function renderQuerySnapshot(
   }
 
   let text = lines.join('\n')
-  if (truncated) text += `\n… [truncated at ${pass.visitedNodes} nodes / ${refs.length} refs]`
+  if (truncated) {
+    text += `\n… [truncated at ${pass.visitedNodes} nodes / ${refs.length} refs: limit=${pass.maxChars} chars; ${truncationHint(pass.maxChars)}]`
+  }
   return {text, refs, truncated}
 }
 
@@ -438,9 +498,26 @@ export function renderAxSnapshot(nodes: readonly AxNode[], options: RenderOption
   const first = runRenderPass(renderById, roots, options, false, ctx)
   if (!first.truncated) return finalize(first, undefined)
   const second = runRenderPass(renderById, roots, options, true, ctx)
-  if (second.truncated) return finalize(second, `… [truncated at ${second.visitedNodes} nodes / ${second.refs.length} refs]`)
+  const hint = truncationHint(second.maxChars)
+  if (second.truncated) {
+    return finalize(
+      second,
+      `… [truncated at ${second.visitedNodes} nodes / ${second.refs.length} refs: limit=${second.maxChars} chars exhausted; ${hint}]`,
+    )
+  }
   // refs 全保住了，但纯文本子树被隐藏 —— 仍算 truncated（内容确实丢了）
-  return finalize(second, `… [truncated at ${second.skippedTextNodes} text-only nodes to keep interactive refs]`)
+  return finalize(
+    second,
+    `… [kept all ${second.refs.length} refs, hid ${second.skippedTextNodes} text-only subtrees: limit=${second.maxChars} chars; ${hint}]`,
+  )
+}
+
+/** 截断提示的下一步建议：预算未到上限就给具体重试值，已到上限则改用 query/rootRef 收窄。 */
+function truncationHint(maxChars: number): string {
+  if (maxChars < MAX_CHARS) {
+    return `retry with limit=${Math.min(MAX_CHARS, Math.max(maxChars * 4, 8_000))} or narrow with query/rootRef`
+  }
+  return 'narrow with query/rootRef'
 }
 
 function finalize(state: RenderState, footer: string | undefined): SnapshotRender {

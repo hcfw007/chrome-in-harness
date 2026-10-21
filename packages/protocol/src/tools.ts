@@ -32,6 +32,12 @@ export const TOOL_ERROR_CODES = {
   INPUT_NOT_LANDED: 'INPUT_NOT_LANDED',
   /** 目标 tab 已关闭（常见于会话间隔后沿用旧 tabId）——开新 tab 或改用现存 tab。 */
   TAB_CLOSED: 'TAB_CLOSED',
+  /** takeover 目标在用户自建的其他分组里：不擅自拆用户的分组，请用户先移出。 */
+  TAB_IN_USER_GROUP: 'TAB_IN_USER_GROUP',
+  /** server 侧：扩展未连接 / 调用中途断开（浏览器未开、扩展被禁用或 SW 正在重启）。 */
+  EXTENSION_DISCONNECTED: 'EXTENSION_DISCONNECTED',
+  /** server 侧：扩展在超时内未回包。 */
+  TOOL_TIMEOUT: 'TOOL_TIMEOUT',
 } as const
 
 export type ToolErrorCode = (typeof TOOL_ERROR_CODES)[keyof typeof TOOL_ERROR_CODES]
@@ -56,8 +62,14 @@ export const snapshotParams = z.object({
   query: z.string().min(1).max(200).optional(),
   /** 只输出该 ref 指向节点的子树。 */
   rootRef: z.string().regex(REF_PATTERN).optional(),
-  /** 快照文本的字符预算（覆盖默认 60KB）。 */
-  limit: z.number().int().positive().max(MAX_SNAPSHOT_CHARS).optional(),
+  /** 快照文本的字符预算（覆盖默认 60KB）；不是节点数。 */
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .max(MAX_SNAPSHOT_CHARS)
+    .optional()
+    .describe('Output CHARACTER budget for the snapshot text (default 60000) — not a node count. Values below ~2000 usually show only a few nodes.'),
   ...tabIdField,
 })
 
@@ -142,6 +154,10 @@ export const takeoverTabParams = z.object({tabId: TAB_ID})
 export const takeoverTabResult = z.object({
   tabId: z.number().int(),
   url: z.string(),
+  /** 调用前已在受管组内（本次为空操作）。旧扩展不回传。 */
+  alreadyManaged: z.boolean().optional(),
+  /** 该 tab 是其窗口当前显示的页（用户正在看）：takeover 不切换焦点，但后续操作对用户可见。 */
+  active: z.boolean().optional(),
 })
 
 export const scrollParams = z.object({
@@ -208,31 +224,160 @@ export const networkEntrySchema = z.object({
   mimeType: z.string().optional(),
   error: z.string().optional(),
   timestamp: z.number(),
+  /** 请求发出 → 响应头到达（或失败）的耗时；旧扩展不回传。 */
+  durationMs: z.number().optional(),
 })
 
 export const readNetworkResult = z.object({
   entries: z.array(networkEntrySchema),
 })
 
-/** 四条件恰传其一：raw shape 给 server 注册 inputSchema，refine 后的给 extension 校验。 */
+export const waitForResponseResult = z.object({
+  matched: z.boolean(),
+  timedOut: z.boolean(),
+  entry: networkEntrySchema.optional(),
+})
+
+/**
+ * 条件至多传一个：raw shape 给 server 注册 inputSchema，refine 后的给 extension 校验。
+ * 不传条件 = 纯延迟（必须显式给 timeoutMs，避免误用成默认 8s 盲等）。
+ */
 export const waitParamsShape = {
   text: z.string().min(1).optional(),
   selector: z.string().min(1).optional(),
   urlContains: z.string().min(1).optional(),
   /** Monaco 类编辑器渲染完成：存在高度 > 40px 的 .monaco-editor 且其内有非空 view-line。 */
   editorRendered: z.boolean().optional(),
+  /** 网络静默：连续 500ms 无新请求（SPA 首屏取数/轮询间隙）。 */
+  networkIdle: z.boolean().optional(),
   timeoutMs: z.number().int().positive().max(30_000).optional(),
   ...tabIdField,
 }
 
-export const waitParams = z.object(waitParamsShape).refine(
-  (p) => [p.text, p.selector, p.urlContains, p.editorRendered].filter((v) => v !== undefined).length === 1,
-  {message: 'exactly one of text / selector / urlContains / editorRendered is required'},
-)
+export const WAIT_CONDITION_KEYS = ['text', 'selector', 'urlContains', 'editorRendered', 'networkIdle'] as const
+
+export function countWaitConditions(p: Partial<Record<(typeof WAIT_CONDITION_KEYS)[number], unknown>>): number {
+  return WAIT_CONDITION_KEYS.filter((key) => p[key] !== undefined).length
+}
+
+/** 校验失败时的文案（server 与 extension 共用）；合法返回 undefined。 */
+export function waitParamsError(p: Partial<Record<(typeof WAIT_CONDITION_KEYS)[number] | 'timeoutMs', unknown>>): string | undefined {
+  const count = countWaitConditions(p)
+  if (count > 1) return `pass at most one of ${WAIT_CONDITION_KEYS.join(' / ')} (got ${count})`
+  if (count === 0 && p.timeoutMs === undefined) {
+    return `pass one of ${WAIT_CONDITION_KEYS.join(' / ')}, or only timeoutMs for a plain delay`
+  }
+  return undefined
+}
+
+export const waitParams = z.object(waitParamsShape).superRefine((p, ctx) => {
+  const message = waitParamsError(p)
+  if (message !== undefined) ctx.addIssue({code: 'custom', message})
+})
 
 export const waitResult = z.object({
   matched: z.boolean(),
   timedOut: z.boolean(),
+})
+
+/** 元素定位三选一（scroll_to / probe / get_html 共用）：ref、CSS selector 或可见文本。 */
+const locatorFields = {
+  ref: z.string().regex(REF_PATTERN).optional(),
+  selector: z.string().min(1).max(500).optional(),
+  /** 可见文本子串（大小写敏感）：取文档序首个「自身直接包含该文本」的可见元素。 */
+  text: z.string().min(1).max(200).optional(),
+} as const
+
+export function locatorParamsError(p: {ref?: unknown; selector?: unknown; text?: unknown}): string | undefined {
+  const count = [p.ref, p.selector, p.text].filter((v) => v !== undefined).length
+  return count === 1 ? undefined : `pass exactly one of ref / selector / text (got ${count})`
+}
+
+function withLocatorRefine<S extends z.ZodRawShape>(shape: S) {
+  return z.object(shape).superRefine((p, ctx) => {
+    const message = locatorParamsError(p as {ref?: unknown; selector?: unknown; text?: unknown})
+    if (message !== undefined) ctx.addIssue({code: 'custom', message})
+  })
+}
+
+/** 定位滚动：把元素滚进视野。 */
+export const scrollToParamsShape = {...locatorFields, ...tabIdField}
+
+export const scrollToParams = withLocatorRefine(scrollToParamsShape)
+
+const rectSchema = z.object({x: z.number(), y: z.number(), width: z.number(), height: z.number()})
+
+/** probe：元素存在性 / 可见性 / rect / 文本 / 白名单属性（替代一串 evaluate_script 探查）。 */
+export const probeParamsShape = {...locatorFields, ...tabIdField}
+
+export const probeParams = withLocatorRefine(probeParamsShape)
+
+export const probeResult = z.object({
+  exists: z.boolean(),
+  /** selector 模式下的匹配总数（只描述第一个）。 */
+  count: z.number().int().min(0).optional(),
+  /** 有尺寸、非 display:none / visibility:hidden / opacity:0。 */
+  visible: z.boolean().optional(),
+  inViewport: z.boolean().optional(),
+  rect: rectSchema.optional(),
+  tag: z.string().optional(),
+  text: z.string().optional(),
+  /** 白名单属性：id、class、role、name、type、href、placeholder、title、alt、disabled、aria-前缀、data-testid。 */
+  attrs: z.record(z.string(), z.string()).optional(),
+})
+
+export const GET_HTML_DEFAULT_CHARS = 4_000
+export const GET_HTML_MAX_CHARS = 20_000
+
+export const getHtmlParamsShape = {
+  ...locatorFields,
+  /** outerHTML 字符上限（默认 4000，最大 20000）。 */
+  maxChars: z.number().int().positive().max(GET_HTML_MAX_CHARS).optional(),
+  ...tabIdField,
+}
+
+export const getHtmlParams = withLocatorRefine(getHtmlParamsShape)
+
+export const getHtmlResult = z.object({
+  html: z.string(),
+  /** outerHTML 原始总长度（字符）。 */
+  length: z.number().int().min(0),
+  truncated: z.boolean(),
+})
+
+/** wait_for_response：等匹配的请求完成（只看元数据，不读响应体）。 */
+export const waitForResponseParams = z.object({
+  urlContains: z.string().min(1).max(500),
+  /** 只认该状态码；缺省时任意完成（含失败）都算命中。 */
+  status: z.number().int().min(100).max(599).optional(),
+  method: z.string().min(1).max(16).optional(),
+  timeoutMs: z.number().int().positive().max(30_000).optional(),
+  /** 回看窗口：调用前 N ms 内已完成的匹配也算（覆盖「先点击、后 wait」的竞态）。默认 2000，0 = 只等未来。 */
+  lookbackMs: z.number().int().min(0).max(30_000).optional(),
+  ...tabIdField,
+})
+
+export const scrollToResult = z.object({
+  /** 滚动后的元素视口 rect（CSS px）。 */
+  rect: rectSchema,
+  /** 元素中心是否落在视口内（false = 被 sticky 头/容器裁剪等，需进一步处理）。 */
+  inViewport: z.boolean(),
+  tag: z.string().optional(),
+  text: z.string().optional(),
+})
+
+export const reloadParams = z.object({
+  /** true = 绕过 HTTP 缓存（验证部署是否生效）。 */
+  hard: z.boolean().optional(),
+  waitUntil: z.enum(['load', 'domcontentloaded', 'networkidle']).optional(),
+  ...tabIdField,
+})
+
+export const reloadResult = z.object({
+  url: z.string(),
+  title: z.string().optional(),
+  loaded: z.boolean(),
+  hard: z.boolean(),
 })
 
 export const addAllowlistDomainParams = z.object({
@@ -285,6 +430,21 @@ export const snapshotResult = z.object({
   truncated: z.boolean(),
 })
 
+/** click_at 落点处的元素（点击前 hit-test）；hit 为 null = 坐标处无元素。 */
+export const hitInfoSchema = z.object({
+  tag: z.string(),
+  id: z.string().optional(),
+  role: z.string().optional(),
+  text: z.string(),
+  rect: z.object({x: z.number(), y: z.number(), width: z.number(), height: z.number()}),
+  interactive: z.object({tag: z.string(), role: z.string().optional(), text: z.string()}).optional(),
+  inIframe: z.boolean().optional(),
+})
+
+export const clickAtResult = z.object({
+  hit: hitInfoSchema.nullable().optional(),
+})
+
 /** snapshot 未请求时两字段均缺省；点击已生效但取快照失败时只带 snapshotError。 */
 export const clickResult = z.object({
   snapshot: snapshotResult.optional(),
@@ -294,6 +454,12 @@ export const clickResult = z.object({
 export const screenshotResult = z.object({
   data: z.string(), // base64 PNG
   mimeType: z.literal('image/png'),
+  /** 视口 CSS 尺寸与设备像素比；旧扩展不回传。 */
+  width: z.number().optional(),
+  height: z.number().optional(),
+  dpr: z.number().optional(),
+  /** 图片像素 / 设备像素的缩放比：1/dpr 时图片像素 == CSS 像素。 */
+  scale: z.number().optional(),
 })
 
 export interface TabSummary {
@@ -319,6 +485,20 @@ export const tabListResult = z.object({
 })
 
 export const okResult = z.object({})
+
+export const reloadExtensionParams = z.object({})
+
+export const reloadExtensionResult = z.object({
+  reloading: z.literal(true),
+  version: z.string(),
+})
+
+/** ping 结果：startedAt 用于确认 reload_extension 后 SW 确实是新的一代。 */
+export const pingResult = z.object({
+  version: z.string(),
+  userAgent: z.string(),
+  startedAt: z.number().optional(),
+})
 
 /** 全部工具名，extension 注册与 server 注册共用，防两端名字漂移。 */
 export const TOOL_NAMES = [
@@ -346,16 +526,23 @@ export const TOOL_NAMES = [
   'click_at',
   'get_text',
   'run_actions',
+  'scroll_to',
+  'reload',
+  'reload_extension',
+  'probe',
+  'get_html',
+  'wait_for_response',
 ] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]
 
 /**
- * `run_actions` 允许的步骤工具：排除自身（防无界递归）与 `screenshot`
- * （二进制结果不适合塞进批量文本，应单独调用）。两端共用，避免漂移。
+ * `run_actions` 允许的步骤工具：排除自身（防无界递归）、`screenshot`
+ * （二进制结果不适合塞进批量文本，应单独调用）与 `reload_extension`（重载会杀掉正在执行的批量）。
+ * 两端共用，避免漂移。
  */
 export const ACTION_STEP_TOOLS = TOOL_NAMES.filter(
-  (name) => name !== 'run_actions' && name !== 'screenshot',
+  (name) => name !== 'run_actions' && name !== 'screenshot' && name !== 'reload_extension',
 )
 
 export const actionStepSchema = z.object({

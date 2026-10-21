@@ -1,6 +1,8 @@
 /** ref 交互工具：click / hover / type / press_key / scroll。ref 三态解析 + CDP 真实输入。 */
+import {clickAtParams, scrollToParams} from '@chrome-in-harness/protocol'
 import {ensureAttached} from '../lib/cdp'
 import {
+  describeNodeRect,
   dispatchClick,
   dispatchHover,
   dispatchKey,
@@ -18,10 +20,14 @@ import {
   viewportCenter,
 } from '../lib/cdp-commands'
 import type {ClickOptions, CursorPosition, FocusState} from '../lib/cdp-commands'
+import {buildHitTestScript, parseHitTestResult} from '../lib/hit-test'
+import type {HitInfo} from '../lib/hit-test'
 import {resolveKey} from '../lib/keymap'
 import type {InputModifier} from '../lib/keymap'
+import {buildScrollToScript, CENTER_AND_DESCRIBE, parseScrollToReceipt} from '../lib/scroll-locate'
 import {planVerbatim} from '../lib/verbatim'
 import {authorizeTab} from './access'
+import {parseToolParams} from './params'
 import {withRef} from './ref-recovery'
 import {snapshot} from './snapshot'
 
@@ -114,14 +120,8 @@ export const click: ToolHandler = async (params) => {
  * 越界坐标显式报错（现采视口度量，无任何跨调用缓存）——静默落点是第二轮战报的教训。
  */
 export const clickAt: ToolHandler = async (params) => {
-  const {x, y, tabId, button, clickCount, modifiers} = params as {
-    x: number
-    y: number
-    tabId?: number
-    button?: 'left' | 'right' | 'middle'
-    clickCount?: number
-    modifiers?: InputModifier[]
-  }
+  // run_actions 步骤绕过 server 校验：x/y 会拼进 hit-test 页面脚本，必须按 schema 校验而非 cast
+  const {x, y, tabId, button, clickCount, modifiers} = parseToolParams('click_at', clickAtParams, params)
   const target = await prepareInputTab(tabId)
   const metrics = await getViewportMetrics(target.tabId)
   if (metrics.width <= 0 || metrics.height <= 0) {
@@ -141,8 +141,15 @@ export const clickAt: ToolHandler = async (params) => {
     ...(clickCount !== undefined ? {clickCount} : {}),
     ...(modifiers !== undefined ? {modifiers} : {}),
   }
+  // 点击前 hit-test：点击可能导航/关弹层，事后再查会落到别的元素上。反馈失败不阻断点击。
+  let hit: HitInfo | null | undefined
+  try {
+    hit = parseHitTestResult(await evaluateJson<unknown>(target.tabId, buildHitTestScript(x, y)))
+  } catch {
+    hit = undefined
+  }
   await dispatchClick(target.tabId, x, y, options)
-  return {}
+  return hit === undefined ? {} : {hit}
 }
 
 export const hover: ToolHandler = async (params) => {
@@ -356,6 +363,32 @@ export const pressKey: ToolHandler = async (params) => {
   }
   await dispatchKey(target.tabId, resolved.info, raw.modifiers ?? [])
   return {}
+}
+
+/** 定位滚动：ref / selector / text 三选一，把元素滚到视口中央并回执 rect。 */
+export const scrollTo: ToolHandler = async (params) => {
+  const raw = parseToolParams('scroll_to', scrollToParams, params)
+  const target = await authorizeTab(raw.tabId)
+  await ensureAttached(target.tabId)
+
+  let receipt: unknown
+  if (raw.ref !== undefined) {
+    // 与 selector/text 模式一致滚到视口中央（DOM.scrollIntoViewIfNeeded 只保证可见，常贴边）
+    receipt = await withRef(target.tabId, raw.ref, async (entry) => {
+      return describeNodeRect(target.tabId, entry.backendDOMNodeId, CENTER_AND_DESCRIBE)
+    })
+  } else {
+    receipt = await evaluateJson<unknown>(
+      target.tabId,
+      buildScrollToScript(raw.selector !== undefined ? {selector: raw.selector} : {text: raw.text ?? ''}),
+    )
+  }
+  const parsed = parseScrollToReceipt(receipt)
+  if (parsed === null) {
+    const what = raw.selector !== undefined ? `selector ${JSON.stringify(raw.selector)}` : `text ${JSON.stringify(raw.text)}`
+    throw new Error(`scroll_to: no visible element matches ${what}; snapshot or wait for it to render first`)
+  }
+  return parsed
 }
 
 export const scroll: ToolHandler = async (params) => {

@@ -1,7 +1,13 @@
-/** wait 工具：注入页面内 Promise 等条件（text / selector / urlContains / editorRendered 四选一）。 */
+/**
+ * wait 工具：页面内条件（text / selector / urlContains / editorRendered）注入 Promise 轮询；
+ * networkIdle 走 CDP 网络事件；不传条件 = 纯延迟。条件至多一个。
+ */
+import {countWaitConditions, waitParams} from '@chrome-in-harness/protocol'
 import {ensureAttached} from '../lib/cdp'
-import {ensureFocusEmulation, evaluateJson} from '../lib/cdp-commands'
+import {ensureFocusEmulation, evaluateJson, waitForNetworkIdle} from '../lib/cdp-commands'
+import {scriptNumber} from '../lib/script-number'
 import {authorizeTab} from './access'
+import {parseToolParams} from './params'
 
 import type {ToolHandler} from './types'
 
@@ -10,6 +16,7 @@ interface WaitParams {
   readonly selector?: string
   readonly urlContains?: string
   readonly editorRendered?: boolean
+  readonly networkIdle?: boolean
   readonly timeoutMs?: number
   readonly tabId?: number
 }
@@ -45,7 +52,8 @@ const EDITOR_RENDERED_CHECK =
   '})()'
 
 /** 页面内执行的等待脚本：轮询条件，页面内 setTimeout 兜底超时。 */
-function buildWaitScript(params: WaitParams, timeoutMs: number): string {
+export function buildWaitScript(params: WaitParams, rawTimeoutMs: number): string {
+  const timeoutMs = scriptNumber('timeoutMs', rawTimeoutMs)
   const check =
     params.text !== undefined
       ? `document.body !== null && document.body.innerText.includes(${JSON.stringify(params.text)})`
@@ -64,12 +72,27 @@ function buildWaitScript(params: WaitParams, timeoutMs: number): string {
   })()`
 }
 
+/** networkIdle 的静默窗：与 navigate networkidle 一致。 */
+const NETWORK_IDLE_HOLD_MS = 500
+
 export const wait: ToolHandler = async (rawParams) => {
-  const params = rawParams as WaitParams
+  // run_actions 步骤绕过 server 校验，这里按协议 schema 再挡一次（timeoutMs 会拼进页面脚本）
+  const params: WaitParams = parseToolParams('wait', waitParams, rawParams)
   const target = await authorizeTab(params.tabId)
   await ensureAttached(target.tabId)
   await ensureFocusEmulation(target.tabId)
   const timeoutMs = params.timeoutMs ?? 8000
+
+  if (countWaitConditions(params) === 0) {
+    // 纯延迟：在扩展侧计时，不依赖页面 setTimeout（后台 tab 会被节流）
+    await new Promise((resolve) => setTimeout(resolve, timeoutMs))
+    return {matched: true, timedOut: false}
+  }
+  if (params.networkIdle === true) {
+    const idle = await waitForNetworkIdle(target.tabId, NETWORK_IDLE_HOLD_MS, timeoutMs)
+    return {matched: idle, timedOut: !idle}
+  }
+
   const result = await evaluateJson<{matched: boolean; timedOut: boolean}>(
     target.tabId,
     buildWaitScript(params, timeoutMs),

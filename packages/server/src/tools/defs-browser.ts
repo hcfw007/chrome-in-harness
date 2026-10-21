@@ -1,12 +1,24 @@
 /** 浏览器操作工具：navigate / snapshot / click / hover / type / press_key / scroll / screenshot / get_text。 */
 import {
   clickAtParams,
+  clickAtResult,
   clickParams,
   clickResult,
+  countWaitConditions,
   getTextParams,
   getTextResult,
   hoverParams,
   pressKeyParams,
+  getHtmlParamsShape,
+  getHtmlResult,
+  locatorParamsError,
+  probeParamsShape,
+  probeResult,
+  reloadParams,
+  reloadResult,
+  scrollToParamsShape,
+  scrollToResult,
+  waitParamsError,
   waitParamsShape,
   waitResult,
   navigateParams,
@@ -20,6 +32,7 @@ import {
   typeParams,
   typeResult,
 } from '@chrome-in-harness/protocol'
+import type {z} from 'zod'
 import {callBridge, defineTool, toolImage, toolText} from './types.js'
 import type {ToolDef} from './types.js'
 
@@ -61,8 +74,9 @@ const snapshot = defineTool({
     '(buttons/links/textboxes/options + weak controls) are listed first with their subtrees, text-only hits ' +
     'render as single lines after them (same-rank order is DOM order) — so query "Submit" surfaces the button, ' +
     'not comment posts that merely mention it; ' +
-    'rootRef — render only that node\'s subtree; limit — character budget. ' +
-    'Refs are never dropped by truncation: on overflow, text-only subtrees are hidden first.',
+    'rootRef — render only that node\'s subtree; limit — output CHARACTER budget (default 60000), not a node count: ' +
+    'omit it unless you need a smaller response. ' +
+    'On overflow, text-only subtrees are hidden first so refs survive; the footer reports what was dropped and a retry limit.',
   schema: snapshotParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'snapshot', args, snapshotResult)
@@ -119,15 +133,40 @@ const clickAt = defineTool({
     'Out-of-viewport coordinates fail with an explicit error (viewport metrics are re-measured per call). ' +
     'To find coordinates, first locate the element with evaluate_script, e.g. ' +
     'evaluate_script expression `(()=>{const r=document.querySelector(".some-btn").getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`, ' +
-    'then click_at with that x/y. Prefer click(ref) when a ref exists.',
+    'then click_at with that x/y. Prefer click(ref) when a ref exists. ' +
+    'The result reports the element under the point (hit-tested just before the click) and its nearest interactive ' +
+    'ancestor — check it to tell a mis-aimed or covered click from a handler that did nothing.',
   schema: clickAtParams.shape,
   async run(args, call) {
-    await callBridge(call, 'click_at', args, okResult)
+    const result = await callBridge(call, 'click_at', args, clickAtResult)
     const detail = args.button && args.button !== 'left' ? ` ${args.button}` : ''
     const count = args.clickCount && args.clickCount > 1 ? ` x${args.clickCount}` : ''
-    return toolText(`Clicked${detail}${count} at (${args.x}, ${args.y})`)
+    return toolText(`Clicked${detail}${count} at (${args.x}, ${args.y})${formatHit(result.hit)}`)
   },
 })
+
+function describeElement(tag: string, role: string | undefined, text: string, id?: string): string {
+  const idPart = id !== undefined ? `#${id}` : ''
+  const rolePart = role !== undefined ? ` role=${role}` : ''
+  const textPart = text.length > 0 ? ` "${text}"` : ''
+  return `<${tag}${idPart}${rolePart}>${textPart}`
+}
+
+/** hit 缺省 = 未能 hit-test（旧扩展或页面忙），不输出任何东西。 */
+function formatHit(hit: z.infer<typeof clickAtResult>['hit']): string {
+  if (hit === undefined) return ''
+  if (hit === null) return '\nHit: nothing at this point (empty page area — no element besides <html>/<body>)'
+  const {x, y, width, height} = hit.rect
+  let line = `\nHit: ${describeElement(hit.tag, hit.role, hit.text, hit.id)} rect=${x},${y} ${width}x${height}`
+  if (hit.inIframe === true) {
+    line += '\nNote: the point is inside an iframe; the click lands in the child frame.'
+  } else if (hit.interactive === undefined) {
+    line += '\nNote: no clickable element (button/link/role/onclick/cursor:pointer) at or above the hit.'
+  } else {
+    line += `\nInteractive target: ${describeElement(hit.interactive.tag, hit.interactive.role, hit.interactive.text)}`
+  }
+  return line
+}
 
 const type = defineTool({
   name: 'type',
@@ -222,13 +261,31 @@ const scroll = defineTool({
 const screenshot = defineTool({
   name: 'screenshot',
   title: 'Capture a screenshot',
-  description: 'Capture a PNG screenshot of the visible viewport.',
+  description:
+    'Capture a PNG screenshot of the visible viewport. The image is scaled so 1 image pixel = 1 CSS pixel, ' +
+    'so coordinates measured on it can be passed to click_at directly; the text part reports width/height/dpr.',
   schema: screenshotParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'screenshot', args, screenshotResult)
-    return toolImage(result.data, result.mimeType)
+    const image = toolImage(result.data, result.mimeType)
+    if (result.width === undefined || result.height === undefined) return image
+    return [...image, ...toolText(describeScreenshotPixels(result.width, result.height, result.dpr ?? 1, result.scale ?? 1))]
   },
 })
+
+/**
+ * 截图像素与 click_at 坐标的换算说明。缩放失败时扩展回传原图（scale=1、dpr>1）：
+ * 此时图片是设备像素，必须如实告知除以 dpr，否则模型量到的坐标会差 dpr 倍。
+ */
+export function describeScreenshotPixels(width: number, height: number, dpr: number, scale: number): string {
+  const viewport = `Viewport ${width}x${height} CSS px, dpr ${dpr}`
+  if (scale !== 1) return `${viewport}; image px = CSS px (downscaled from dpr ${dpr}) — use these coordinates with click_at.`
+  if (dpr === 1) return `${viewport}; image px = CSS px — use these coordinates with click_at.`
+  return (
+    `${viewport}; image px = DEVICE px (downscaling was unavailable) — ` +
+    `divide coordinates measured on the image by ${dpr} before passing them to click_at.`
+  )
+}
 
 const wait = defineTool({
   name: 'wait',
@@ -237,22 +294,108 @@ const wait = defineTool({
     'Wait until a condition holds on the page: text appears in the body, a CSS selector matches, the URL contains a substring, ' +
     'or editorRendered:true (a Monaco-style editor exists with height > 40px, width > 200px and a non-empty ' +
     'visible view-line — resize-collapsed editors are auto-recovered via monaco layout(); guards against both ' +
-    'collapsed/hidden instances and 5x5 narrow-strip false readiness after window resizes). Exactly one condition per call. ' +
+    'collapsed/hidden instances and 5x5 narrow-strip false readiness after window resizes), ' +
+    'or networkIdle:true (no new network request for 500ms — e.g. after a click that triggers async fetches). ' +
+    'At most one condition per call; pass only timeoutMs for a plain delay (prefer a real condition when one exists). ' +
     'Returns {matched, timedOut} — a timeout is not an error; snapshot afterwards to see the current state.',
-  // 注册无 refine 的 shape（refine 会破坏 tools/list 的 JSON schema）；四选一的约束在 run 里落地。
+  // 注册无 refine 的 shape（refine 会破坏 tools/list 的 JSON schema）；条件约束在 run 里落地。
   schema: waitParamsShape,
   async run(args, call) {
-    const conditions = [args.text, args.selector, args.urlContains, args.editorRendered].filter(
-      (v) => v !== undefined,
-    ).length
-    if (conditions !== 1) {
-      throw new Error(
-        `exactly one of text / selector / urlContains / editorRendered is required (got ${conditions})`,
-      )
-    }
+    const invalid = waitParamsError(args)
+    if (invalid !== undefined) throw new Error(invalid)
     const result = await callBridge(call, 'wait', args, waitResult)
-    if (result.matched) return toolText('Condition matched.')
+    if (countWaitConditions(args) === 0) return toolText(`Waited ${args.timeoutMs}ms.`)
+    if (result.matched) return toolText(args.networkIdle === true ? 'Network idle.' : 'Condition matched.')
     return toolText('Timed out after waiting; condition not met. Take a snapshot to see the current state.')
+  },
+})
+
+const scrollTo = defineTool({
+  name: 'scroll_to',
+  title: 'Scroll an element into view',
+  description:
+    'Scroll so that an element is centered in the viewport. Pass exactly one of: ref (from snapshot), ' +
+    'selector (CSS, first match), or text (first visible element whose own text contains the substring, case-sensitive). ' +
+    'Returns the element\'s viewport rect after scrolling (CSS px, usable for click_at) and inViewport — ' +
+    'false means it is still clipped (sticky header, nested scroll container, zero size).',
+  schema: scrollToParamsShape,
+  async run(args, call) {
+    const invalid = locatorParamsError(args)
+    if (invalid !== undefined) throw new Error(invalid)
+    const result = await callBridge(call, 'scroll_to', args, scrollToResult)
+    const {x, y, width, height} = result.rect
+    const label = result.tag !== undefined ? ` <${result.tag}>${result.text !== undefined ? ` "${result.text}"` : ''}` : ''
+    const state = result.inViewport ? 'in viewport' : 'NOT fully in viewport (clipped or zero-size)'
+    return toolText(`Scrolled to${label} rect=${x},${y} ${width}x${height} — ${state}`)
+  },
+})
+
+function formatProbe(result: z.infer<typeof probeResult>, args: {selector?: string}): string {
+  if (!result.exists) {
+    const count = args.selector !== undefined ? ` (0 matches for ${JSON.stringify(args.selector)})` : ''
+    return `Not found${count}.`
+  }
+  const lines: string[] = []
+  const head = `<${result.tag ?? '?'}>${result.text !== undefined && result.text.length > 0 ? ` "${result.text}"` : ''}`
+  lines.push(result.count !== undefined && result.count > 1 ? `${head} — first of ${result.count} matches` : head)
+  if (result.rect !== undefined) {
+    const {x, y, width, height} = result.rect
+    const state = result.visible === true ? (result.inViewport === true ? 'visible, in viewport' : 'visible, outside viewport') : 'NOT visible'
+    lines.push(`rect=${x},${y} ${width}x${height} — ${state}`)
+  }
+  const attrs = Object.entries(result.attrs ?? {})
+  if (attrs.length > 0) lines.push(`attrs: ${attrs.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ')}`)
+  return lines.join('\n')
+}
+
+const probe = defineTool({
+  name: 'probe',
+  title: 'Inspect an element without touching it',
+  description:
+    'Check whether an element exists and what state it is in, without scrolling or clicking. Pass exactly one of ' +
+    'ref, selector (CSS, first match; reports the total match count) or text (first visible element whose own text ' +
+    'contains the substring). Returns tag, text, viewport rect (CSS px), visible/inViewport, and allowlisted attributes ' +
+    '(id, class, role, name, type, href, placeholder, title, alt, disabled, aria-*, data-testid). ' +
+    'A missing element is reported as "Not found", not an error. Use this instead of ad-hoc evaluate_script probes.',
+  schema: probeParamsShape,
+  async run(args, call) {
+    const invalid = locatorParamsError(args)
+    if (invalid !== undefined) throw new Error(invalid)
+    const result = await callBridge(call, 'probe', args, probeResult)
+    return toolText(formatProbe(result, args))
+  },
+})
+
+const getHtml = defineTool({
+  name: 'get_html',
+  title: 'Get an element\'s outerHTML',
+  description:
+    'Return the outerHTML of one element (ref, CSS selector, or visible text — exactly one), truncated to maxChars ' +
+    '(default 4000, max 20000). Use it to see markup the accessibility snapshot hides (class names, data attributes, ' +
+    'nested structure of custom controls). Prefer a narrow selector: whole-page HTML wastes context.',
+  schema: getHtmlParamsShape,
+  async run(args, call) {
+    const invalid = locatorParamsError(args)
+    if (invalid !== undefined) throw new Error(invalid)
+    const result = await callBridge(call, 'get_html', args, getHtmlResult)
+    const suffix = result.truncated ? `\n… (TRUNCATED: showing ${result.html.length} of ${result.length} chars; raise maxChars or narrow the selector)` : ''
+    return toolText(result.html + suffix)
+  },
+})
+
+const reload = defineTool({
+  name: 'reload',
+  title: 'Reload the page',
+  description:
+    'Reload the current page and wait like navigate (waitUntil: "load" | "domcontentloaded" (default) | "networkidle"). ' +
+    'hard:true bypasses the HTTP cache — use it to check whether a deploy is live instead of adding cache-busting ' +
+    'query params that change the route. All refs are invalidated; snapshot again afterwards.',
+  schema: reloadParams.shape,
+  async run(args, call) {
+    const result = await callBridge(call, 'reload', args, reloadResult)
+    const kind = result.hard ? 'Hard-reloaded (cache bypassed)' : 'Reloaded'
+    const suffix = result.loaded ? '' : ' (readiness signal timed out; content may be incomplete)'
+    return toolText(`${kind} ${result.url}${suffix}${result.title ? ` — "${result.title}"` : ''}`)
   },
 })
 
@@ -267,6 +410,10 @@ export const BROWSER_TOOL_DEFS: readonly ToolDef[] = [
   pressKey,
   getText,
   scroll,
+  scrollTo,
+  reload,
+  probe,
+  getHtml,
   screenshot,
 ]
 

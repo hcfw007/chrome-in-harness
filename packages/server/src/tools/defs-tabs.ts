@@ -3,6 +3,9 @@ import {
   ensureTabParams,
   ensureTabResult,
   okResult,
+  pingResult,
+  reloadExtensionParams,
+  reloadExtensionResult,
   tabCloseParams,
   tabListParams,
   tabListResult,
@@ -13,7 +16,7 @@ import {
 } from '@chrome-in-harness/protocol'
 import {z} from 'zod'
 import {callBridge, defineTool, toolText} from './types.js'
-import type {ToolDef} from './types.js'
+import type {BridgeCall, ToolDef} from './types.js'
 
 const ping = defineTool({
   name: 'ping',
@@ -93,15 +96,98 @@ const takeoverTab = defineTool({
   name: 'takeover_tab',
   title: 'Take over an already-open tab',
   description:
-    'Move an existing (user-opened) tab into the "Chrome in Harness" group so tools can operate on it. ' +
+    'Move an existing, user-opened tab (one tab_list shows WITHOUT [managed]) into the "Chrome in Harness" group so the ' +
+    'other tools can operate on it. Calling it on a tab that is already managed is a no-op. ' +
     'SECURITY-SENSITIVE: only call this when the user explicitly asked to work in that tab, never on your own initiative. ' +
-    'The tab URL must already be in the allowlist (otherwise the call fails and suggests request_permission). ' +
-    'The user can revoke at any time by dragging the tab out of the group. Returns {tabId, url}.',
+    'Side effects are limited: it never activates, focuses or navigates the tab and never moves it to another window ' +
+    '(it joins a managed group in the same window, or starts one there; the tab may shift position in its tab strip). ' +
+    'Refusals: TAB_CLOSED (gone), DOMAIN_CONFIRMATION_REQUIRED / DOMAIN_NOT_ALLOWED (URL not allowlisted), ' +
+    'TAB_IN_USER_GROUP (it sits in one of the user\'s own groups, which is never broken up). ' +
+    'If the result says the tab is the one the user is viewing, tell the user: later actions are visible to them, and ' +
+    'calls that omit tabId may target it. The user can revoke at any time by dragging the tab out of the group.',
   schema: takeoverTabParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'takeover_tab', args, takeoverTabResult)
-    return toolText(`Tab ${result.tabId} is now managed (${result.url}).`)
+    const head =
+      result.alreadyManaged === true
+        ? `Tab ${result.tabId} was already managed (${result.url}); nothing changed.`
+        : `Tab ${result.tabId} is now managed (${result.url}). Focus and URL were not changed.`
+    const viewing =
+      result.active === true
+        ? '\nNote: this is the tab the user is currently viewing — actions on it are visible to them, ' +
+          'and calls that omit tabId may resolve to it. Pass tabId explicitly.'
+        : ''
+    return toolText(head + viewing)
   },
 })
 
-export const TAB_TOOL_DEFS: readonly ToolDef[] = [ping, tabList, tabNew, tabSelect, tabClose, takeoverTab, ensureTab]
+/** 重载后等待扩展重连的上限：SW 重启 + WS 退避首轮 1s，留足余量。 */
+export const RELOAD_RECONNECT_TIMEOUT_MS = 20_000
+const RELOAD_POLL_INTERVAL_MS = 500
+
+async function readStartedAt(call: BridgeCall): Promise<number | undefined> {
+  const result = pingResult.safeParse(await call('ping', {}))
+  return result.success ? result.data.startedAt : undefined
+}
+
+/**
+ * 轮询 ping 直到扩展重连且 SW 是新的一代（startedAt 变化）。
+ * 旧扩展的 ping 不带 startedAt：只要重连成功就算完成。
+ */
+export async function waitForFreshExtension(
+  call: BridgeCall,
+  previousStartedAt: number | undefined,
+  timeoutMs = RELOAD_RECONNECT_TIMEOUT_MS,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<{reconnected: boolean; startedAt?: number}> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    await sleep(RELOAD_POLL_INTERVAL_MS)
+    try {
+      const startedAt = await readStartedAt(call)
+      if (previousStartedAt === undefined || startedAt === undefined || startedAt !== previousStartedAt) {
+        return startedAt === undefined ? {reconnected: true} : {reconnected: true, startedAt}
+      }
+    } catch {
+      // 断连或重连中：继续轮询
+    }
+  }
+  return {reconnected: false}
+}
+
+const reloadExtension = defineTool({
+  name: 'reload_extension',
+  title: 'Reload the Chrome extension (development)',
+  description:
+    'Reload the unpacked Chrome in Harness extension from disk — same as clicking ↻ on chrome://extensions — ' +
+    'then wait until it reconnects. Use after `npm run build:extension` to pick up new extension code. ' +
+    'Only works for a development (unpacked) install. All refs and debugger sessions are dropped: take a new snapshot afterwards. ' +
+    'Tool schemas do not change: if the build added or changed tool parameters, the MCP server and client session still need a restart.',
+  schema: reloadExtensionParams.shape,
+  async run(args, call) {
+    const before = await readStartedAt(call)
+    const result = await callBridge(call, 'reload_extension', args, reloadExtensionResult)
+    const fresh = await waitForFreshExtension(call, before)
+    if (!fresh.reconnected) {
+      return toolText(
+        `Extension ${result.version} reload was triggered, but it did not reconnect within ${RELOAD_RECONNECT_TIMEOUT_MS / 1000}s. ` +
+          'Check chrome://extensions for load errors (a broken build will not start).',
+      )
+    }
+    const info = await call('ping', {}).catch(() => undefined)
+    const parsed = pingResult.safeParse(info)
+    const version = parsed.success ? parsed.data.version : result.version
+    return toolText(`Extension reloaded and reconnected (version ${version}). Refs are invalidated — snapshot again.`)
+  },
+})
+
+export const TAB_TOOL_DEFS: readonly ToolDef[] = [
+  ping,
+  tabList,
+  tabNew,
+  tabSelect,
+  tabClose,
+  takeoverTab,
+  ensureTab,
+  reloadExtension,
+]

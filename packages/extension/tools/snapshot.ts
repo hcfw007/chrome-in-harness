@@ -1,4 +1,5 @@
 /** snapshot / navigate 工具实现。takeSnapshot 为 ref 自动恢复共用。 */
+import {TOOL_ERROR_CODES, reloadParams} from '@chrome-in-harness/protocol'
 import {applyRefToken, renderAxSnapshot} from '../lib/ax-snapshot'
 import type {RefSeed} from '../lib/ax-snapshot'
 import {ensureAttached} from '../lib/cdp'
@@ -7,7 +8,9 @@ import {
   getDocumentRoot,
   getFullAxTree,
   getTabTitle,
+  getTabUrl,
   navigateAndWait,
+  reloadAndWait,
 } from '../lib/cdp-commands'
 import type {NavigateWaitUntil} from '../lib/cdp-commands'
 import {refStore} from '../lib/ref-store'
@@ -19,7 +22,8 @@ import {
   parseWeakScanResult,
 } from '../lib/weak-interactive'
 import {snapshotToken} from '../lib/worker-era'
-import {authorizeNavigate, authorizeTab, resolveTargetTab} from './access'
+import {authorizeNavigate, authorizeTab, resolveTargetTab, toolError} from './access'
+import {parseToolParams} from './params'
 
 import type {ToolHandler} from './types'
 
@@ -99,9 +103,9 @@ export const snapshot: ToolHandler = async (params) => {
     // rootRef 与其他 ref 同一套 token 校验：跨代/过期显式报错，不按编号盲匹配
     const resolved = refStore.resolve(target.tabId, raw.rootRef)
     if (resolved.kind !== 'ok') {
-      throw new Error(
-        `rootRef ${raw.rootRef} is not usable (${resolved.kind === 'no_snapshot' ? 'no snapshot in this worker era' : 'stale'}); call snapshot first`,
-      )
+      const code = resolved.kind === 'no_snapshot' ? TOOL_ERROR_CODES.NO_SNAPSHOT : TOOL_ERROR_CODES.STALE_REF
+      const why = resolved.kind === 'no_snapshot' ? 'no snapshot exists in this worker era' : 'it is from an older snapshot'
+      throw toolError(code, `rootRef ${raw.rootRef} is not usable (${why}) — call snapshot without rootRef first, then reuse a ref from it.`)
     }
     rootBackendNodeId = resolved.entry.backendDOMNodeId
   }
@@ -118,6 +122,21 @@ export const snapshot: ToolHandler = async (params) => {
     url: target.url,
     truncated: state.truncated,
   }
+}
+
+/**
+ * reload：当前 URL 必须已授权（authorizeTab）；hard 绕过缓存。旧 ref 一律失效（先失效再刷新，
+ * 刷新中途的并发调用不会拿旧 ref 点到新页面）。返回刷新后的 URL——重定向后与刷新前不同。
+ */
+export const reload: ToolHandler = async (params) => {
+  const raw = parseToolParams('reload', reloadParams, params)
+  const hard = raw.hard === true
+  const target = await authorizeTab(raw.tabId)
+  await ensureAttached(target.tabId)
+  refStore.invalidate(target.tabId)
+  const {loaded} = await reloadAndWait(target.tabId, hard, raw.waitUntil ?? 'domcontentloaded')
+  const [title, url] = await Promise.all([getTabTitle(target.tabId), getTabUrl(target.tabId)])
+  return {url: url ?? target.url, title, loaded, hard}
 }
 
 /** navigate 只校验目标 URL（起点 tab 常是 about:blank，当前 URL 不在名单是正常的）。 */

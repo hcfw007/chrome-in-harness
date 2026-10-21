@@ -134,7 +134,60 @@ describe('takeover_tab 生命周期语义', () => {
     const group = vi.fn(async () => 7)
     installChrome({group})
     const result = (await takeoverTab({tabId: 42} as never)) as {tabId: number; url: string}
-    expect(result).toEqual({tabId: 42, url: 'https://project.feishu.cn/x'})
+    expect(result).toEqual({tabId: 42, url: 'https://project.feishu.cn/x', alreadyManaged: true, active: false})
+    expect(group).not.toHaveBeenCalled()
+  })
+
+  /** 未受管的用户 tab：第一次 isTabManaged 为 false，归组后为 true。 */
+  function unmanagedThenManaged(): void {
+    isTabManaged.mockReset()
+    isTabManaged.mockResolvedValueOnce(false).mockResolvedValue(true)
+  }
+
+  test('takes over the tab the user is viewing without activating, focusing or navigating it', async () => {
+    unmanagedThenManaged()
+    getAllowlist.mockResolvedValue(['feishu.cn'])
+    findReusableManagedGroup.mockResolvedValue({id: 55, windowId: 1})
+    const update = vi.fn(async () => ({}))
+    const group = vi.fn(async () => 55)
+    installChrome({
+      update,
+      group,
+      get: async (tabId: number) => ({id: tabId, windowId: 1, url: 'https://project.feishu.cn/x', active: true, groupId: -1}),
+    })
+    const result = await takeoverTab({tabId: 42} as never)
+    expect(result).toEqual({tabId: 42, url: 'https://project.feishu.cn/x', alreadyManaged: false, active: true})
+    expect(group).toHaveBeenCalledWith({groupId: 55, tabIds: 42})
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  test('never moves the tab to another window: starts a group in its own window instead', async () => {
+    unmanagedThenManaged()
+    getAllowlist.mockResolvedValue(['feishu.cn'])
+    findReusableManagedGroup.mockResolvedValue({id: 55, windowId: 2})
+    const group = vi.fn(async () => 77)
+    installChrome({group, get: async (tabId: number) => ({id: tabId, windowId: 1, url: 'https://project.feishu.cn/x', groupId: -1})})
+    await takeoverTab({tabId: 42} as never)
+    expect(group).toHaveBeenCalledWith({createProperties: {windowId: 1}, tabIds: 42})
+  })
+
+  test('refuses a tab inside one of the user\'s own groups and leaves it untouched', async () => {
+    isTabManaged.mockReset()
+    isTabManaged.mockResolvedValue(false)
+    getAllowlist.mockResolvedValue(['feishu.cn'])
+    const group = vi.fn(async () => 7)
+    installChrome({group, get: async (tabId: number) => ({id: tabId, windowId: 1, url: 'https://project.feishu.cn/x', groupId: 9})})
+    await expect(takeoverTab({tabId: 42} as never)).rejects.toThrow('TAB_IN_USER_GROUP')
+    expect(group).not.toHaveBeenCalled()
+  })
+
+  test('checks the allowlist before touching groups', async () => {
+    isTabManaged.mockReset()
+    isTabManaged.mockResolvedValue(false)
+    getAllowlist.mockResolvedValue([])
+    const group = vi.fn(async () => 7)
+    installChrome({group, get: async (tabId: number) => ({id: tabId, windowId: 1, url: 'https://unlisted.example/', groupId: -1})})
+    await expect(takeoverTab({tabId: 42} as never)).rejects.toThrow('DOMAIN_CONFIRMATION_REQUIRED')
     expect(group).not.toHaveBeenCalled()
   })
 })

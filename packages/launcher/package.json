@@ -1,6 +1,6 @@
 {
   "name": "@chrome-in-harness/launcher",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "bin": {
     "chrome-in-harness": "dist/bin.js"
@@ -17,7 +17,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@chrome-in-harness/server": "^0.3.0"
+    "@chrome-in-harness/server": "^0.4.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

@@ -15,8 +15,9 @@ a dedicated test profile, account, and data. It is not an isolated browser sandb
 - **Page content / DOM**: When you invoke tools like `snapshot`, `click`, `type`, or
   `evaluate_script`, the extension reads the accessibility tree or DOM of the tab you
   explicitly target, and executes the operations you asked for.
-- **Network request metadata**: The `read_network` tool captures request **metadata**
-  (method, URL, status, MIME type). **Response bodies are never captured.**
+- **Network request metadata**: The `read_network` and `wait_for_response` tools capture
+  request **metadata** (method, URL, status, MIME type, duration, failure reason).
+  **Response bodies and headers are never captured.**
 - **Console output**: The `read_console` tool captures console messages of the target tab.
 - **Screenshots**: The `screenshot` tool returns an image of the target tab's viewport.
 - **Tab metadata**: `tab_list` lists titles and URLs of open tabs, including unmanaged tabs;

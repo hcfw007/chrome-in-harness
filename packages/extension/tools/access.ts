@@ -49,7 +49,10 @@ export async function resolveTargetTab(tabId?: number): Promise<TargetTab> {
   }
   const tab = await findManagedTab()
   if (tab === undefined || tab.id === undefined) {
-    throw new Error('no managed tab found; call tab_new to create one inside the Chrome in Harness group')
+    throw toolError(
+      TOOL_ERROR_CODES.TAB_NOT_MANAGED,
+      'no tab is inside the \'Chrome in Harness\' group — call ensure_tab to create one, then pass its tabId.',
+    )
   }
   return {tabId: tab.id, url: tabUrl(tab)}
 }

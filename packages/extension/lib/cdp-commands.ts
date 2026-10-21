@@ -9,7 +9,7 @@ import {consoleBuffer} from './console-buffer'
 import type {ConsoleLevel} from './console-buffer'
 import type {InputModifier, KeyDispatch} from './keymap'
 import {keyDownText, modifierBitmask, resolveKey} from './keymap'
-import {networkBuffer} from './network-buffer'
+import {describeLoadingFailure, networkBuffer} from './network-buffer'
 
 /** 每个 debugger 会话 enable 一次的 domain 集合（SW 内存级）。 */
 const enabledDomains = new Map<number, Set<string>>()
@@ -26,12 +26,26 @@ async function enableOnce(tabId: number, domain: string, command: string): Promi
   }
 }
 
+export interface EvaluateOptions {
+  /** 以用户手势执行：脚本内 element.click() 触发的 window.open 等需要 user activation 的行为不被拦截。 */
+  readonly userGesture?: boolean
+}
+
 /** 执行表达式并取 JSON 值；页面内异常透出为普通 Error。 */
-export async function evaluateJson<T = unknown>(tabId: number, expression: string): Promise<T> {
+export async function evaluateJson<T = unknown>(
+  tabId: number,
+  expression: string,
+  options: EvaluateOptions = {},
+): Promise<T> {
   const result = await send<{
     result?: {value?: unknown}
     exceptionDetails?: {text?: string; exception?: {description?: string}}
-  }>(tabId, 'Runtime.evaluate', {expression, returnByValue: true, awaitPromise: true})
+  }>(tabId, 'Runtime.evaluate', {
+    expression,
+    returnByValue: true,
+    awaitPromise: true,
+    ...(options.userGesture === true ? {userGesture: true} : {}),
+  })
   const details = result.exceptionDetails
   if (details !== undefined) {
     throw new Error(details.exception?.description ?? details.text ?? 'evaluate failed')
@@ -103,15 +117,27 @@ function attachSubscribers(tabId: number): void {
     )
   })
   subscribeEvents(tabId, 'Network.responseReceived', (raw) => {
-    const params = raw as {requestId?: string; response?: {status?: number; mimeType?: string}}
+    const params = raw as {requestId?: string; timestamp?: number; response?: {status?: number; mimeType?: string}}
     if (params.requestId === undefined) return
-    networkBuffer.recordResponse(tabId, params.requestId, params.response?.status ?? 0, params.response?.mimeType)
+    networkBuffer.recordResponse(
+      tabId,
+      params.requestId,
+      params.response?.status ?? 0,
+      params.response?.mimeType,
+      params.timestamp,
+    )
   })
   subscribeEvents(tabId, 'Network.loadingFailed', (raw) => {
-    const params = raw as {requestId?: string; errorText?: string; canceled?: boolean}
+    const params = raw as {
+      requestId?: string
+      timestamp?: number
+      errorText?: string
+      canceled?: boolean
+      blockedReason?: string
+      corsErrorStatus?: {corsError?: string}
+    }
     if (params.requestId === undefined) return
-    const reason = params.canceled === true ? 'canceled' : params.errorText ?? 'failed'
-    networkBuffer.recordFailure(tabId, params.requestId, reason)
+    networkBuffer.recordFailure(tabId, params.requestId, describeLoadingFailure(params), params.timestamp)
   })
 }
 
@@ -162,11 +188,29 @@ export async function navigateAndWait(
   url: string,
   waitUntil: NavigateWaitUntil = 'domcontentloaded',
 ): Promise<{loaded: boolean}> {
+  return triggerAndWait(tabId, () => send(tabId, 'Page.navigate', {url}), waitUntil)
+}
+
+/** 重新加载并按同一套策略等待；hard=true 绕过缓存（Page.reload ignoreCache）。 */
+export async function reloadAndWait(
+  tabId: number,
+  hard: boolean,
+  waitUntil: NavigateWaitUntil = 'domcontentloaded',
+): Promise<{loaded: boolean}> {
+  return triggerAndWait(tabId, () => send(tabId, 'Page.reload', {ignoreCache: hard}), waitUntil)
+}
+
+/** 先挂等待再触发（navigate/reload），避免事件在订阅前就已派发。 */
+async function triggerAndWait(
+  tabId: number,
+  trigger: () => Promise<unknown>,
+  waitUntil: NavigateWaitUntil,
+): Promise<{loaded: boolean}> {
   await enableOnce(tabId, 'Page', 'Page.enable')
   if (waitUntil === 'load') {
     const [loadEvent] = await Promise.all([
       waitForEvent(tabId, 'Page.loadEventFired', NAVIGATE_TIMEOUT_MS),
-      send(tabId, 'Page.navigate', {url}),
+      trigger(),
     ])
     return {loaded: loadEvent !== null}
   }
@@ -176,7 +220,7 @@ export async function navigateAndWait(
   if (waitUntil === 'domcontentloaded') {
     const [dclEvent] = await Promise.all([
       waitForEvent(tabId, 'Page.domContentEventFired', NAVIGATE_TIMEOUT_MS),
-      send(tabId, 'Page.navigate', {url}),
+      trigger(),
     ])
     if (dclEvent === null) return {loaded: false}
     await sleep(SETTLE_MS)
@@ -189,11 +233,25 @@ export async function navigateAndWait(
   try {
     const [dclEvent] = await Promise.all([
       waitForEvent(tabId, 'Page.domContentEventFired', NAVIGATE_TIMEOUT_MS),
-      send(tabId, 'Page.navigate', {url}),
+      trigger(),
     ])
     if (dclEvent === null) return {loaded: false}
     const idle = await quiet.waitUntilQuiet(SETTLE_MS, NAVIGATE_TIMEOUT_MS + SETTLE_MS)
     return {loaded: idle}
+  } finally {
+    quiet.dispose()
+  }
+}
+
+/**
+ * 页面已加载后的网络静默等待（wait networkIdle）：连续 holdMs 内无新请求 → true。
+ * 依赖 Network domain 已 enable（ensureCollectors 负责）；这里再 enableOnce 一次兜底。
+ */
+export async function waitForNetworkIdle(tabId: number, holdMs: number, timeoutMs: number): Promise<boolean> {
+  await enableOnce(tabId, 'Network', 'Network.enable')
+  const quiet = new RequestQuietTracker(tabId)
+  try {
+    return await quiet.waitUntilQuiet(holdMs, timeoutMs)
   } finally {
     quiet.dispose()
   }
@@ -238,6 +296,13 @@ class RequestQuietTracker {
 export async function getTabTitle(tabId: number): Promise<string | undefined> {
   const tab = await chrome.tabs.get(tabId).catch(() => undefined)
   return tab?.title
+}
+
+/** 当前 URL（重定向后的落点）；读不到返回 undefined，由调用方回退。 */
+export async function getTabUrl(tabId: number): Promise<string | undefined> {
+  const tab = await chrome.tabs.get(tabId).catch(() => undefined)
+  const url = tab?.url
+  return url !== undefined && url.length > 0 ? url : undefined
 }
 
 /**
@@ -703,6 +768,17 @@ export async function resolveNodeInnerText(tabId: number, backendNodeId: number)
   return typeof result.result?.value === 'string' ? result.result.value : ''
 }
 
+/** 按 ref 读元素视口 rect + 摘要（scroll_to 的回执）；脚本与 scroll-locate 共用同一份描述函数。 */
+export async function describeNodeRect(tabId: number, backendNodeId: number, describeFn: string): Promise<unknown> {
+  const objectId = await resolveBackendNode(tabId, backendNodeId)
+  const result = await send<{result?: {value?: unknown}}>(tabId, 'Runtime.callFunctionOn', {
+    objectId,
+    functionDeclaration: `function () { return (${describeFn})(this) }`,
+    returnByValue: true,
+  })
+  return result.result?.value
+}
+
 /** DOM.getDocument（pierce 全深），供弱交互扫描做文档序对齐。 */
 export async function getDocumentRoot(tabId: number): Promise<unknown> {
   await enableOnce(tabId, 'DOM', 'DOM.enable')
@@ -745,6 +821,9 @@ export async function getAxNodeValue(tabId: number, backendNodeId: number): Prom
   return node?.value
 }
 
+/**
+ * 视口截图（原始设备像素，不带 clip——clip.scale 实测会平铺/截空白，缩放交给 image-scale）。
+ */
 export async function captureScreenshot(tabId: number): Promise<string> {
   const result = await send<{data?: string}>(tabId, 'Page.captureScreenshot', {format: 'png'})
   if (result.data === undefined) throw new Error('screenshot returned no data')

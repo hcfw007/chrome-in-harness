@@ -73,7 +73,12 @@ function createMcpServer(wsBridge: WsBridge): McpServer {
         'For repetitive sequences (for example typing a string with press_key), prefer run_actions to batch them in one request. ' +
         'For async-rendered content, call wait (text/selector) instead of sleeping, and before screenshot after an interaction. ' +
         'To debug a page, use read_console / read_network and evaluate_script to read page state. ' +
-        'Pages that re-render on click invalidate refs: use click with snapshot: true to get fresh refs in the same call.',
+        'Pages that re-render on click invalidate refs: use click with snapshot: true to get fresh refs in the same call. ' +
+        'Errors from this server start with an uppercase code ("CODE: reason — next step"); follow the stated next step. ' +
+        'DOMAIN_CONFIRMATION_REQUIRED means a confirmation window is open: ask the user to allow it, then retry. ' +
+        'EXTENSION_DISCONNECTED right after a reload means wait a few seconds and retry. ' +
+        'An error without such a code (for example a declined permission prompt, or the tool list disappearing) comes from ' +
+        'the MCP client or host, not from this server.',
     },
   )
   registerAllTools(server, (tool, params) => wsBridge.sendToExtension(tool, params))

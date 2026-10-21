@@ -33,10 +33,13 @@ async function assertManaged(tabId: number): Promise<void> {
  * 把 tab 并进已有的 Chrome in Harness 组；不存在才新建一个。归组失败不影响 tab 本身。
  * 复用必须走前缀归一匹配（见 findReusableManagedGroup）：组标题会被 setGroupsState
  * 改写为「⏳/✅/❌ Chrome in Harness」，按裸标题精确查询会每次都误判为无组而反复新建。
+ * sameWindowOnly：只并入同窗口的组，否则在该窗口新建——并入别的窗口的组会把 tab
+ * 物理搬到那个窗口（takeover 用户正在看的页时就是「抢页」）。
  */
-async function groupTab(tabId: number, windowId: number | undefined): Promise<void> {
+async function groupTab(tabId: number, windowId: number | undefined, sameWindowOnly = false): Promise<void> {
   try {
-    const existing = await findReusableManagedGroup(windowId)
+    const candidate = await findReusableManagedGroup(windowId)
+    const existing = sameWindowOnly && candidate?.windowId !== windowId ? undefined : candidate
     if (existing !== undefined) {
       await chrome.tabs.group({groupId: existing.id, tabIds: tabId})
       return
@@ -136,19 +139,32 @@ export const tabClose: ToolHandler = async (params) => {
  * takeover_tab：用户显式授权后把已打开的 tab 接管进受管组（P2）。
  * SECURITY-SENSITIVE，仅当用户明确要求在该 tab 工作时调用；URL 必须已在白名单内
  * （域边界不放宽），未授权域名走统一确认窗口；归组后用户随时可拖出撤销。
+ * 对用户页面的副作用收口：
+ * - 不激活、不聚焦、不导航；
+ * - 不跨窗口搬 tab（只并入同窗口的受管组，否则就地新建组）；
+ * - tab 已在用户自建的其他分组里 → 拒绝（TAB_IN_USER_GROUP），不擅自拆用户的分组；
+ * - 回传 active：接管的是用户正在看的页时，调用方据此提醒用户。
  */
 export const takeoverTab: ToolHandler = async (params) => {
   const {tabId} = params as {tabId: number}
   const tab = await chrome.tabs.get(tabId).catch(() => undefined)
   if (tab === undefined || tab.id === undefined) throw tabClosed(tabId)
   const url = tab.url ?? ''
+  const active = tab.active === true
   await assertUrlAllowed(url)
   if (await isTabManaged(tabId)) {
-    return {tabId, url}
+    return {tabId, url, alreadyManaged: true, active}
   }
-  await groupTab(tabId, tab.windowId)
+  if (tab.groupId !== undefined && tab.groupId !== -1) {
+    throw toolError(
+      TOOL_ERROR_CODES.TAB_IN_USER_GROUP,
+      `tab ${tabId} belongs to one of the user's own tab groups; it was left untouched. ` +
+        'Ask the user to drag it out of that group (or into the \'Chrome in Harness\' group) and retry.',
+    )
+  }
+  await groupTab(tabId, tab.windowId, true)
   if (!(await isTabManaged(tabId))) {
     throw new Error(`failed to move tab ${tabId} into the managed group (grouping was blocked); try again`)
   }
-  return {tabId, url}
+  return {tabId, url, alreadyManaged: false, active}
 }
