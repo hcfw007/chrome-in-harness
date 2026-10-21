@@ -1,6 +1,6 @@
 {
   "name": "chrome-in-harness",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Browser MCP: control a real Chrome profile via a MV3 extension bridged to a local MCP server",
   "workspaces": [
