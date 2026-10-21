@@ -298,6 +298,13 @@ export async function getTabTitle(tabId: number): Promise<string | undefined> {
   return tab?.title
 }
 
+/** 当前 URL（重定向后的落点）；读不到返回 undefined，由调用方回退。 */
+export async function getTabUrl(tabId: number): Promise<string | undefined> {
+  const tab = await chrome.tabs.get(tabId).catch(() => undefined)
+  const url = tab?.url
+  return url !== undefined && url.length > 0 ? url : undefined
+}
+
 /**
  * 开启焦点仿真：让后台 tab 自认为处于聚焦态，从而接收 CDP `Input.*`。
  * 这是 Playwright / Claude-in-Chrome 的做法（Emulation.setFocusEmulationEnabled，

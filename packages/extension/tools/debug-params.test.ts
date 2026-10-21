@@ -84,3 +84,40 @@ describe('wait_for_response validates params before authorizing or polling', () 
     expect(match.since).toBeLessThanOrEqual(Date.now() - 500)
   })
 })
+
+describe('wait_for_response lookback and deadline', () => {
+  test('defaults to a 2s lookback; lookbackMs 0 only accepts requests completing from now on', async () => {
+    findCompleted.mockReturnValue(HIT)
+    const before = Date.now()
+    await waitForResponse({urlContains: '/api'})
+    const defaultSince = (findCompleted.mock.calls[0]?.[1] as {since: number}).since
+    expect(defaultSince).toBeLessThanOrEqual(Date.now() - 2_000)
+    expect(defaultSince).toBeGreaterThanOrEqual(before - 2_000)
+
+    findCompleted.mockClear()
+    const start = Date.now()
+    await waitForResponse({urlContains: '/api', lookbackMs: 0})
+    const futureSince = (findCompleted.mock.calls[0]?.[1] as {since: number}).since
+    expect(futureSince).toBeGreaterThanOrEqual(start)
+  })
+
+  test('forwards method and status filters to the buffer match', async () => {
+    findCompleted.mockReturnValue(HIT)
+    await waitForResponse({urlContains: '/api', method: 'POST', status: 500})
+    expect(findCompleted.mock.calls[0]?.[1]).toMatchObject({urlContains: '/api', method: 'POST', status: 500})
+  })
+
+  test('keeps polling until a match completes, then stops', async () => {
+    findCompleted.mockReturnValueOnce(undefined).mockReturnValueOnce(undefined).mockReturnValue(HIT)
+    await expect(waitForResponse({urlContains: '/api', timeoutMs: 2_000})).resolves.toMatchObject({matched: true})
+    expect(findCompleted).toHaveBeenCalledTimes(3)
+  })
+
+  test('returns timedOut without throwing once the deadline passes', async () => {
+    const start = Date.now()
+    await expect(waitForResponse({urlContains: '/never', timeoutMs: 250})).resolves.toEqual({matched: false, timedOut: true})
+    const elapsed = Date.now() - start
+    expect(elapsed).toBeGreaterThanOrEqual(240)
+    expect(elapsed).toBeLessThan(1_000)
+  })
+})

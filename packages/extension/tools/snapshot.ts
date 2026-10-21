@@ -1,5 +1,5 @@
 /** snapshot / navigate 工具实现。takeSnapshot 为 ref 自动恢复共用。 */
-import {TOOL_ERROR_CODES} from '@chrome-in-harness/protocol'
+import {TOOL_ERROR_CODES, reloadParams} from '@chrome-in-harness/protocol'
 import {applyRefToken, renderAxSnapshot} from '../lib/ax-snapshot'
 import type {RefSeed} from '../lib/ax-snapshot'
 import {ensureAttached} from '../lib/cdp'
@@ -8,6 +8,7 @@ import {
   getDocumentRoot,
   getFullAxTree,
   getTabTitle,
+  getTabUrl,
   navigateAndWait,
   reloadAndWait,
 } from '../lib/cdp-commands'
@@ -22,6 +23,7 @@ import {
 } from '../lib/weak-interactive'
 import {snapshotToken} from '../lib/worker-era'
 import {authorizeNavigate, authorizeTab, resolveTargetTab, toolError} from './access'
+import {parseToolParams} from './params'
 
 import type {ToolHandler} from './types'
 
@@ -122,16 +124,19 @@ export const snapshot: ToolHandler = async (params) => {
   }
 }
 
-/** reload：当前 URL 必须已授权（authorizeTab）；hard 绕过缓存。旧 ref 一律失效。 */
+/**
+ * reload：当前 URL 必须已授权（authorizeTab）；hard 绕过缓存。旧 ref 一律失效（先失效再刷新，
+ * 刷新中途的并发调用不会拿旧 ref 点到新页面）。返回刷新后的 URL——重定向后与刷新前不同。
+ */
 export const reload: ToolHandler = async (params) => {
-  const raw = params as {tabId?: number; hard?: boolean; waitUntil?: NavigateWaitUntil}
+  const raw = parseToolParams('reload', reloadParams, params)
   const hard = raw.hard === true
   const target = await authorizeTab(raw.tabId)
   await ensureAttached(target.tabId)
   refStore.invalidate(target.tabId)
   const {loaded} = await reloadAndWait(target.tabId, hard, raw.waitUntil ?? 'domcontentloaded')
-  const title = await getTabTitle(target.tabId)
-  return {url: target.url, title, loaded, hard}
+  const [title, url] = await Promise.all([getTabTitle(target.tabId), getTabUrl(target.tabId)])
+  return {url: url ?? target.url, title, loaded, hard}
 }
 
 /** navigate 只校验目标 URL（起点 tab 常是 about:blank，当前 URL 不在名单是正常的）。 */

@@ -281,6 +281,23 @@ describe('browser defs', () => {
     expect(content).toEqual([{type: 'text', text: 'Hard-reloaded (cache bypassed) https://e.com/a — "A"'}])
   })
 
+  test('screenshot tells the agent to divide by dpr when downscaling fell back to device pixels', async () => {
+    const fake = fakeBridge({data: 'aGVsbG8=', mimeType: 'image/png', width: 1280, height: 720, dpr: 2, scale: 1})
+    const content = await run(byName('screenshot'), {}, fake.call)
+    expect((content[1] as {text: string}).text).toBe(
+      'Viewport 1280x720 CSS px, dpr 2; image px = DEVICE px (downscaling was unavailable) — ' +
+        'divide coordinates measured on the image by 2 before passing them to click_at.',
+    )
+  })
+
+  test('screenshot at dpr 1 needs no conversion', async () => {
+    const fake = fakeBridge({data: 'aGVsbG8=', mimeType: 'image/png', width: 1280, height: 720, dpr: 1, scale: 1})
+    const content = await run(byName('screenshot'), {}, fake.call)
+    expect((content[1] as {text: string}).text).toBe(
+      'Viewport 1280x720 CSS px, dpr 1; image px = CSS px — use these coordinates with click_at.',
+    )
+  })
+
   test('screenshot appends viewport metrics when the extension reports them', async () => {
     const fake = fakeBridge({data: 'aGVsbG8=', mimeType: 'image/png', width: 1280, height: 720, dpr: 2, scale: 0.5})
     const content = await run(byName('screenshot'), {}, fake.call)

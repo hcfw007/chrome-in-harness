@@ -1,7 +1,7 @@
 import {PROTOCOL_VERSION, isWsRequest} from '@chrome-in-harness/protocol'
 import {afterEach, describe, expect, test} from 'vitest'
 import {WebSocket} from 'ws'
-import {WsBridge, type WsBridgeOptions} from './ws-bridge.js'
+import {TOOL_WAIT_MARGIN_MS, WsBridge, requestTimeoutFor, type WsBridgeOptions} from './ws-bridge.js'
 
 const EXTENSION_ORIGIN = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop'
 
@@ -124,6 +124,38 @@ describe('WsBridge request correlation', () => {
     // 等 server 侧处理完 close 事件
     await new Promise((resolve) => setTimeout(resolve, 20))
     await expect(started.sendToExtension('ping', {})).rejects.toThrow(/probably reconnecting .* wait a few seconds/)
+  })
+
+  test('extends the bridge timeout for tools that wait on their own (timeoutMs + margin)', async () => {
+    const started = await startBridge({requestTimeoutMs: 50})
+    const client = await connectExtension(requirePort(started), () => ({ok: true, result: null}))
+    client.removeAllListeners('message')
+    // 扩展 120ms 后才回包：基线 50ms 会超时，但调用自带 timeoutMs=100 → 桥超时放宽到 100 + 余量
+    client.on('message', (raw: Buffer) => {
+      const request = JSON.parse(raw.toString()) as {id: string}
+      setTimeout(() => client.send(JSON.stringify({v: 1, id: request.id, ok: true, result: 'late'})), 120)
+    })
+    await expect(started.sendToExtension('wait', {timeoutMs: 100})).resolves.toBe('late')
+  })
+
+  test('requestTimeoutFor only honors a finite positive numeric timeoutMs', () => {
+    expect(requestTimeoutFor({timeoutMs: 30_000}, 30_000)).toBe(30_000 + TOOL_WAIT_MARGIN_MS)
+    expect(requestTimeoutFor({timeoutMs: 1_000}, 30_000)).toBe(30_000)
+    expect(requestTimeoutFor({timeoutMs: '99999'}, 30_000)).toBe(30_000)
+    expect(requestTimeoutFor({timeoutMs: Number.POSITIVE_INFINITY}, 30_000)).toBe(30_000)
+    expect(requestTimeoutFor(undefined, 30_000)).toBe(30_000)
+  })
+
+  test('requestTimeoutFor sums the waits of run_actions steps, which run sequentially', () => {
+    const batch = {
+      actions: [
+        {tool: 'wait', params: {timeoutMs: 20_000}},
+        {tool: 'click', params: {ref: 'e1'}},
+        {tool: 'wait_for_response', params: {urlContains: '/api', timeoutMs: 15_000}},
+        {tool: 'press_key'},
+      ],
+    }
+    expect(requestTimeoutFor(batch, 30_000)).toBe(35_000 + TOOL_WAIT_MARGIN_MS)
   })
 
   test('times out with TOOL_TIMEOUT and likely causes', async () => {

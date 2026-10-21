@@ -22,6 +22,12 @@ export const DESCRIBE_ELEMENT = `function (el) {
   }
 }`
 
+/** ref 模式（this 绑定元素）：先滚到视口中央再回执，与 selector/text 模式行为一致。 */
+export const CENTER_AND_DESCRIBE = `function (el) {
+  el.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'})
+  return (${DESCRIBE_ELEMENT})(el)
+}`
+
 /**
  * 页面内脚本：按 selector 或可见文本找元素 → scrollIntoView(center) → 回执；找不到返回 null。
  * 文本定位取文档序首个「直接子文本节点包含该串」的可见元素（避免命中 body 这类祖先）。

@@ -269,15 +269,23 @@ const screenshot = defineTool({
     const result = await callBridge(call, 'screenshot', args, screenshotResult)
     const image = toolImage(result.data, result.mimeType)
     if (result.width === undefined || result.height === undefined) return image
-    const pixels = result.scale !== undefined && result.scale !== 1
-      ? `image px = CSS px (downscaled from dpr ${result.dpr})`
-      : 'image px = CSS px'
-    return [
-      ...image,
-      ...toolText(`Viewport ${result.width}x${result.height} CSS px, dpr ${result.dpr ?? 1}; ${pixels} — use these coordinates with click_at.`),
-    ]
+    return [...image, ...toolText(describeScreenshotPixels(result.width, result.height, result.dpr ?? 1, result.scale ?? 1))]
   },
 })
+
+/**
+ * 截图像素与 click_at 坐标的换算说明。缩放失败时扩展回传原图（scale=1、dpr>1）：
+ * 此时图片是设备像素，必须如实告知除以 dpr，否则模型量到的坐标会差 dpr 倍。
+ */
+export function describeScreenshotPixels(width: number, height: number, dpr: number, scale: number): string {
+  const viewport = `Viewport ${width}x${height} CSS px, dpr ${dpr}`
+  if (scale !== 1) return `${viewport}; image px = CSS px (downscaled from dpr ${dpr}) — use these coordinates with click_at.`
+  if (dpr === 1) return `${viewport}; image px = CSS px — use these coordinates with click_at.`
+  return (
+    `${viewport}; image px = DEVICE px (downscaling was unavailable) — ` +
+    `divide coordinates measured on the image by ${dpr} before passing them to click_at.`
+  )
+}
 
 const wait = defineTool({
   name: 'wait',

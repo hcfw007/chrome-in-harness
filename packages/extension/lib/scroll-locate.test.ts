@@ -1,5 +1,11 @@
 import {describe, expect, test} from 'vitest'
-import {TEXT_CONTROL_SELECTOR, buildScrollToScript, parseScrollToReceipt} from './scroll-locate.js'
+import {
+  CENTER_AND_DESCRIBE,
+  DESCRIBE_ELEMENT,
+  TEXT_CONTROL_SELECTOR,
+  buildScrollToScript,
+  parseScrollToReceipt,
+} from './scroll-locate.js'
 
 describe('buildScrollToScript', () => {
   test('selector mode queries the selector and centers it', () => {
@@ -29,6 +35,14 @@ describe('buildScrollToScript', () => {
         expect(script).not.toContain(banned)
       }
     }
+  })
+})
+
+describe('CENTER_AND_DESCRIBE (ref mode)', () => {
+  test('centers the element like selector/text mode and embeds the real describe function', () => {
+    expect(CENTER_AND_DESCRIBE).toContain('scrollIntoView({block: \'center\'')
+    expect(CENTER_AND_DESCRIBE).toContain(DESCRIBE_ELEMENT)
+    expect(CENTER_AND_DESCRIBE).not.toContain('${')
   })
 })
 

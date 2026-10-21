@@ -24,7 +24,7 @@ import {buildHitTestScript, parseHitTestResult} from '../lib/hit-test'
 import type {HitInfo} from '../lib/hit-test'
 import {resolveKey} from '../lib/keymap'
 import type {InputModifier} from '../lib/keymap'
-import {buildScrollToScript, DESCRIBE_ELEMENT, parseScrollToReceipt} from '../lib/scroll-locate'
+import {buildScrollToScript, CENTER_AND_DESCRIBE, parseScrollToReceipt} from '../lib/scroll-locate'
 import {planVerbatim} from '../lib/verbatim'
 import {authorizeTab} from './access'
 import {parseToolParams} from './params'
@@ -373,9 +373,9 @@ export const scrollTo: ToolHandler = async (params) => {
 
   let receipt: unknown
   if (raw.ref !== undefined) {
+    // 与 selector/text 模式一致滚到视口中央（DOM.scrollIntoViewIfNeeded 只保证可见，常贴边）
     receipt = await withRef(target.tabId, raw.ref, async (entry) => {
-      await scrollIntoViewIfNeeded(target.tabId, entry.backendDOMNodeId)
-      return describeNodeRect(target.tabId, entry.backendDOMNodeId, DESCRIBE_ELEMENT)
+      return describeNodeRect(target.tabId, entry.backendDOMNodeId, CENTER_AND_DESCRIBE)
     })
   } else {
     receipt = await evaluateJson<unknown>(
