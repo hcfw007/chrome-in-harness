@@ -32,6 +32,8 @@ export const TOOL_ERROR_CODES = {
   INPUT_NOT_LANDED: 'INPUT_NOT_LANDED',
   /** 目标 tab 已关闭（常见于会话间隔后沿用旧 tabId）——开新 tab 或改用现存 tab。 */
   TAB_CLOSED: 'TAB_CLOSED',
+  /** takeover 目标在用户自建的其他分组里：不擅自拆用户的分组，请用户先移出。 */
+  TAB_IN_USER_GROUP: 'TAB_IN_USER_GROUP',
 } as const
 
 export type ToolErrorCode = (typeof TOOL_ERROR_CODES)[keyof typeof TOOL_ERROR_CODES]
@@ -148,6 +150,10 @@ export const takeoverTabParams = z.object({tabId: TAB_ID})
 export const takeoverTabResult = z.object({
   tabId: z.number().int(),
   url: z.string(),
+  /** 调用前已在受管组内（本次为空操作）。旧扩展不回传。 */
+  alreadyManaged: z.boolean().optional(),
+  /** 该 tab 是其窗口当前显示的页（用户正在看）：takeover 不切换焦点，但后续操作对用户可见。 */
+  active: z.boolean().optional(),
 })
 
 export const scrollParams = z.object({

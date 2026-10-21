@@ -464,8 +464,22 @@ describe('tab defs', () => {
     const content = await run(byName('takeover_tab'), {tabId: 4}, fake.call)
     expect(fake.received[0]).toEqual({tool: 'takeover_tab', params: {tabId: 4}})
     expect(content).toEqual([
-      {type: 'text', text: 'Tab 4 is now managed (https://leetcode.com/problems/two-sum/).'},
+      {
+        type: 'text',
+        text: 'Tab 4 is now managed (https://leetcode.com/problems/two-sum/). Focus and URL were not changed.',
+      },
     ])
+  })
+
+  test('takeover_tab warns when the tab is the one the user is viewing, and reports no-ops', async () => {
+    const viewing = fakeBridge({tabId: 4, url: 'https://a.com/', alreadyManaged: false, active: true})
+    const text = ((await run(byName('takeover_tab'), {tabId: 4}, viewing.call))[0] as {text: string}).text
+    expect(text).toContain('the tab the user is currently viewing')
+    expect(text).toContain('Pass tabId explicitly')
+
+    const noop = fakeBridge({tabId: 4, url: 'https://a.com/', alreadyManaged: true, active: false})
+    const noopText = ((await run(byName('takeover_tab'), {tabId: 4}, noop.call))[0] as {text: string}).text
+    expect(noopText).toBe('Tab 4 was already managed (https://a.com/); nothing changed.')
   })
 })
 

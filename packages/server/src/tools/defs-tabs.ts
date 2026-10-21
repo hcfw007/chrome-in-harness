@@ -96,14 +96,28 @@ const takeoverTab = defineTool({
   name: 'takeover_tab',
   title: 'Take over an already-open tab',
   description:
-    'Move an existing (user-opened) tab into the "Chrome in Harness" group so tools can operate on it. ' +
+    'Move an existing, user-opened tab (one tab_list shows WITHOUT [managed]) into the "Chrome in Harness" group so the ' +
+    'other tools can operate on it. Calling it on a tab that is already managed is a no-op. ' +
     'SECURITY-SENSITIVE: only call this when the user explicitly asked to work in that tab, never on your own initiative. ' +
-    'The tab URL must already be in the allowlist (otherwise the call fails and suggests request_permission). ' +
-    'The user can revoke at any time by dragging the tab out of the group. Returns {tabId, url}.',
+    'Side effects are limited: it never activates, focuses or navigates the tab and never moves it to another window ' +
+    '(it joins a managed group in the same window, or starts one there; the tab may shift position in its tab strip). ' +
+    'Refusals: TAB_CLOSED (gone), DOMAIN_CONFIRMATION_REQUIRED / DOMAIN_NOT_ALLOWED (URL not allowlisted), ' +
+    'TAB_IN_USER_GROUP (it sits in one of the user\'s own groups, which is never broken up). ' +
+    'If the result says the tab is the one the user is viewing, tell the user: later actions are visible to them, and ' +
+    'calls that omit tabId may target it. The user can revoke at any time by dragging the tab out of the group.',
   schema: takeoverTabParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'takeover_tab', args, takeoverTabResult)
-    return toolText(`Tab ${result.tabId} is now managed (${result.url}).`)
+    const head =
+      result.alreadyManaged === true
+        ? `Tab ${result.tabId} was already managed (${result.url}); nothing changed.`
+        : `Tab ${result.tabId} is now managed (${result.url}). Focus and URL were not changed.`
+    const viewing =
+      result.active === true
+        ? '\nNote: this is the tab the user is currently viewing — actions on it are visible to them, ' +
+          'and calls that omit tabId may resolve to it. Pass tabId explicitly.'
+        : ''
+    return toolText(head + viewing)
   },
 })
 

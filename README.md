@@ -84,7 +84,7 @@ Chrome 扩展 · MV3 service worker / WXT
 - **add_allowlist_domain**：显式扩白名单（无确认窗口，直接生效）。一般无需手动调用——访问新域名会自动弹确认窗口
 - **evaluate_script**：受限 `Runtime.evaluate` 执行页面上下文 JS。黑名单拒绝网络访问（fetch/XHR/WebSocket/sendBeacon）、eval/Function、导航（location/window.open）、document.write、debugger 与 `chrome.*`；`awaitPromise:true` 需 async IIFE；结果 JSON 序列化超限截断；以用户手势执行，脚本内 `element.click()` 触发的页面 `window.open` 不会被弹窗拦截
 - **request_permission**：针对域名发起 `chrome.permissions.request` 原生授权弹窗，授予后同步写入 storage 白名单。仅当用户明确要求时调用
-- **takeover_tab**：把已打开的用户 tab 收编进受管组（`tab_list` 标 `[managed:<groupId>]` 便于识别）；仅在用户明确要求在该 tab 工作时调用，URL 必须已在白名单
+- **takeover_tab**：把已打开、未受管的用户 tab 收编进受管组（`tab_list` 标 `[managed:<groupId>]` 便于识别），对已受管的 tab 是空操作；仅在用户明确要求在该 tab 工作时调用，URL 必须已在白名单。不激活、不聚焦、不导航、不跨窗口搬 tab（只并入同窗口的受管组，否则在该窗口新建）；tab 在用户自建的其他分组里时拒绝并报 `TAB_IN_USER_GROUP`，不拆用户分组；接管的是用户正在看的页时结果会注明，提醒后续操作对用户可见
 - **ensure_tab / run_actions**：见下文[标签页使用约定](#标签页使用约定)与[批量执行](#批量执行)
 
 - **snapshot**：`chrome.debugger` + CDP `Accessibility.getFullAXTree`，渲染成 Playwright ariaSnapshot 风格的缩进文本，交互元素带 `[ref=eN-<token>]`；优先用 ref 交互，减少选择器漂移。坐标点击、当前焦点输入等场景可不使用 ref
