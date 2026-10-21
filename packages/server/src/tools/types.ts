@@ -39,9 +39,12 @@ export function toolImage(data: string, mimeType: string): ToolContent[] {
   return [{type: 'image', data, mimeType}]
 }
 
+/**
+ * 错误结果正文：不加 "Error: " 前缀——MCP 结果已带 isError:true，客户端包装成异常时
+ * 还会再加一层，前缀叠成 "Error: Error: …"。消息形如 "CODE: 原因 — 下一步"。
+ */
 export function formatError(error: unknown): ToolContent[] {
-  const message = error instanceof Error ? error.message : String(error)
-  return toolText(`Error: ${message}`)
+  return toolText(error instanceof Error ? error.message : String(error))
 }
 
 /**

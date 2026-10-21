@@ -1,4 +1,5 @@
 /** snapshot / navigate 工具实现。takeSnapshot 为 ref 自动恢复共用。 */
+import {TOOL_ERROR_CODES} from '@chrome-in-harness/protocol'
 import {applyRefToken, renderAxSnapshot} from '../lib/ax-snapshot'
 import type {RefSeed} from '../lib/ax-snapshot'
 import {ensureAttached} from '../lib/cdp'
@@ -20,7 +21,7 @@ import {
   parseWeakScanResult,
 } from '../lib/weak-interactive'
 import {snapshotToken} from '../lib/worker-era'
-import {authorizeNavigate, authorizeTab, resolveTargetTab} from './access'
+import {authorizeNavigate, authorizeTab, resolveTargetTab, toolError} from './access'
 
 import type {ToolHandler} from './types'
 
@@ -100,9 +101,9 @@ export const snapshot: ToolHandler = async (params) => {
     // rootRef 与其他 ref 同一套 token 校验：跨代/过期显式报错，不按编号盲匹配
     const resolved = refStore.resolve(target.tabId, raw.rootRef)
     if (resolved.kind !== 'ok') {
-      throw new Error(
-        `rootRef ${raw.rootRef} is not usable (${resolved.kind === 'no_snapshot' ? 'no snapshot in this worker era' : 'stale'}); call snapshot first`,
-      )
+      const code = resolved.kind === 'no_snapshot' ? TOOL_ERROR_CODES.NO_SNAPSHOT : TOOL_ERROR_CODES.STALE_REF
+      const why = resolved.kind === 'no_snapshot' ? 'no snapshot exists in this worker era' : 'it is from an older snapshot'
+      throw toolError(code, `rootRef ${raw.rootRef} is not usable (${why}) — call snapshot without rootRef first, then reuse a ref from it.`)
     }
     rootBackendNodeId = resolved.entry.backendDOMNodeId
   }

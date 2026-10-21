@@ -5,6 +5,7 @@ import {BROWSER_TOOL_DEFS} from './defs-browser.js'
 import {DEBUG_TOOL_DEFS} from './defs-debug.js'
 import {EVALUATE_TOOL_DEFS} from './defs-evaluate.js'
 import {TAB_TOOL_DEFS, waitForFreshExtension} from './defs-tabs.js'
+import {formatError} from './types.js'
 import type {BridgeCall, ToolDef} from './types.js'
 
 function fakeBridge(result: unknown | Error): {call: BridgeCall; received: Array<{tool: string; params: unknown}>} {
@@ -39,6 +40,15 @@ describe('tool name uniqueness', () => {
 
   test('server exposes exactly the shared tool name contract (no dropped tools)', () => {
     expect([...ALL].map((def) => def.name).sort()).toEqual([...TOOL_NAMES].sort())
+  })
+})
+
+describe('formatError', () => {
+  test('passes the coded message through without an "Error: " prefix (clients add their own)', () => {
+    expect(formatError(new Error('STALE_REF: ref e1 is stale — snapshot again'))).toEqual([
+      {type: 'text', text: 'STALE_REF: ref e1 is stale — snapshot again'},
+    ])
+    expect(formatError('plain')).toEqual([{type: 'text', text: 'plain'}])
   })
 })
 

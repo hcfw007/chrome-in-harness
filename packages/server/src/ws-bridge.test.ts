@@ -98,24 +98,38 @@ describe('WsBridge request correlation', () => {
     expect(second).toEqual({n: 2})
   })
 
-  test('rejects when no extension is connected', async () => {
+  test('rejects with EXTENSION_DISCONNECTED and setup steps when it never connected', async () => {
     const started = await startBridge()
-    await expect(started.sendToExtension('ping', {})).rejects.toThrow('not connected')
+    const call = started.sendToExtension('ping', {})
+    await expect(call).rejects.toThrow(/^EXTENSION_DISCONNECTED: .*has not connected since this server started/)
+    await expect(started.sendToExtension('ping', {})).rejects.toThrow('enabled on chrome://extensions')
   })
 
-  test('rejects an in-flight call when the extension disconnects', async () => {
+  test('rejects an in-flight call when the extension disconnects, warning it may have taken effect', async () => {
     const started = await startBridge()
     const client = await connectExtension(requirePort(started), () => ({ok: true, result: null}))
     client.removeAllListeners('message')
     const inFlight = started.sendToExtension('ping', {})
     client.close()
-    await expect(inFlight).rejects.toThrow('Extension disconnected')
+    await expect(inFlight).rejects.toThrow(/^EXTENSION_DISCONNECTED: .*may or may not have taken effect/)
   })
 
-  test('times out a call the extension never answers', async () => {
+  test('right after a disconnect, suggests waiting for the reconnect instead of setup steps', async () => {
+    const started = await startBridge()
+    const client = await connectExtension(requirePort(started), () => ({ok: true, result: null}))
+    await new Promise<void>((resolve) => {
+      client.once('close', () => resolve())
+      client.close()
+    })
+    // 等 server 侧处理完 close 事件
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await expect(started.sendToExtension('ping', {})).rejects.toThrow(/probably reconnecting .* wait a few seconds/)
+  })
+
+  test('times out with TOOL_TIMEOUT and likely causes', async () => {
     const started = await startBridge({requestTimeoutMs: 50})
     const client = await connectExtension(requirePort(started), () => ({ok: true, result: null}))
     client.removeAllListeners('message')
-    await expect(started.sendToExtension('ping', {})).rejects.toThrow('timed out after 50ms')
+    await expect(started.sendToExtension('ping', {})).rejects.toThrow(/^TOOL_TIMEOUT: .*within 50ms .*DevTools/)
   })
 })

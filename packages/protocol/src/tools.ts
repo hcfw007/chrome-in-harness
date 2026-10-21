@@ -34,6 +34,10 @@ export const TOOL_ERROR_CODES = {
   TAB_CLOSED: 'TAB_CLOSED',
   /** takeover 目标在用户自建的其他分组里：不擅自拆用户的分组，请用户先移出。 */
   TAB_IN_USER_GROUP: 'TAB_IN_USER_GROUP',
+  /** server 侧：扩展未连接 / 调用中途断开（浏览器未开、扩展被禁用或 SW 正在重启）。 */
+  EXTENSION_DISCONNECTED: 'EXTENSION_DISCONNECTED',
+  /** server 侧：扩展在超时内未回包。 */
+  TOOL_TIMEOUT: 'TOOL_TIMEOUT',
 } as const
 
 export type ToolErrorCode = (typeof TOOL_ERROR_CODES)[keyof typeof TOOL_ERROR_CODES]
