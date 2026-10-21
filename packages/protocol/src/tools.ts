@@ -214,13 +214,24 @@ export const networkEntrySchema = z.object({
   mimeType: z.string().optional(),
   error: z.string().optional(),
   timestamp: z.number(),
+  /** 请求发出 → 响应头到达（或失败）的耗时；旧扩展不回传。 */
+  durationMs: z.number().optional(),
 })
 
 export const readNetworkResult = z.object({
   entries: z.array(networkEntrySchema),
 })
 
-/** 四条件恰传其一：raw shape 给 server 注册 inputSchema，refine 后的给 extension 校验。 */
+export const waitForResponseResult = z.object({
+  matched: z.boolean(),
+  timedOut: z.boolean(),
+  entry: networkEntrySchema.optional(),
+})
+
+/**
+ * 条件至多传一个：raw shape 给 server 注册 inputSchema，refine 后的给 extension 校验。
+ * 不传条件 = 纯延迟（必须显式给 timeoutMs，避免误用成默认 8s 盲等）。
+ */
 export const waitParamsShape = {
   text: z.string().min(1).optional(),
   selector: z.string().min(1).optional(),
@@ -285,6 +296,56 @@ export const scrollToParamsShape = {...locatorFields, ...tabIdField}
 export const scrollToParams = withLocatorRefine(scrollToParamsShape)
 
 const rectSchema = z.object({x: z.number(), y: z.number(), width: z.number(), height: z.number()})
+
+/** probe：元素存在性 / 可见性 / rect / 文本 / 白名单属性（替代一串 evaluate_script 探查）。 */
+export const probeParamsShape = {...locatorFields, ...tabIdField}
+
+export const probeParams = withLocatorRefine(probeParamsShape)
+
+export const probeResult = z.object({
+  exists: z.boolean(),
+  /** selector 模式下的匹配总数（只描述第一个）。 */
+  count: z.number().int().min(0).optional(),
+  /** 有尺寸、非 display:none / visibility:hidden / opacity:0。 */
+  visible: z.boolean().optional(),
+  inViewport: z.boolean().optional(),
+  rect: rectSchema.optional(),
+  tag: z.string().optional(),
+  text: z.string().optional(),
+  /** 白名单属性：id、class、role、name、type、href、placeholder、title、alt、disabled、aria-前缀、data-testid。 */
+  attrs: z.record(z.string(), z.string()).optional(),
+})
+
+export const GET_HTML_DEFAULT_CHARS = 4_000
+export const GET_HTML_MAX_CHARS = 20_000
+
+export const getHtmlParamsShape = {
+  ...locatorFields,
+  /** outerHTML 字符上限（默认 4000，最大 20000）。 */
+  maxChars: z.number().int().positive().max(GET_HTML_MAX_CHARS).optional(),
+  ...tabIdField,
+}
+
+export const getHtmlParams = withLocatorRefine(getHtmlParamsShape)
+
+export const getHtmlResult = z.object({
+  html: z.string(),
+  /** outerHTML 原始总长度（字符）。 */
+  length: z.number().int().min(0),
+  truncated: z.boolean(),
+})
+
+/** wait_for_response：等匹配的请求完成（只看元数据，不读响应体）。 */
+export const waitForResponseParams = z.object({
+  urlContains: z.string().min(1).max(500),
+  /** 只认该状态码；缺省时任意完成（含失败）都算命中。 */
+  status: z.number().int().min(100).max(599).optional(),
+  method: z.string().min(1).max(16).optional(),
+  timeoutMs: z.number().int().positive().max(30_000).optional(),
+  /** 回看窗口：调用前 N ms 内已完成的匹配也算（覆盖「先点击、后 wait」的竞态）。默认 2000，0 = 只等未来。 */
+  lookbackMs: z.number().int().min(0).max(30_000).optional(),
+  ...tabIdField,
+})
 
 export const scrollToResult = z.object({
   /** 滚动后的元素视口 rect（CSS px）。 */
@@ -458,6 +519,9 @@ export const TOOL_NAMES = [
   'scroll_to',
   'reload',
   'reload_extension',
+  'probe',
+  'get_html',
+  'wait_for_response',
 ] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]

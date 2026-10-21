@@ -205,6 +205,65 @@ describe('browser defs', () => {
     expect(content).toEqual([{type: 'text', text: 'Scrolled to <button> "导出" rect=10,300 80x20 — in viewport'}])
   })
 
+  test('probe renders found elements with rect, visibility, match count and attrs', async () => {
+    const fake = fakeBridge({
+      exists: true,
+      count: 3,
+      visible: true,
+      inViewport: false,
+      rect: {x: 10, y: 1400, width: 80, height: 24},
+      tag: 'button',
+      text: '导出',
+      attrs: {class: 'ant-btn', disabled: ''},
+    })
+    const content = await run(byName('probe'), {selector: '.ant-btn'}, fake.call)
+    expect((content[0] as {text: string}).text).toBe(
+      '<button> "导出" — first of 3 matches\nrect=10,1400 80x24 — visible, outside viewport\nattrs: class="ant-btn" disabled=""',
+    )
+  })
+
+  test('probe reports a missing element without erroring, and validates the locator', async () => {
+    const fake = fakeBridge({exists: false, count: 0})
+    const content = await run(byName('probe'), {selector: '#nope'}, fake.call)
+    expect(content).toEqual([{type: 'text', text: 'Not found (0 matches for "#nope").'}])
+    await expect(run(byName('probe'), {}, fake.call)).rejects.toThrow('exactly one of ref / selector / text')
+  })
+
+  test('get_html flags truncation with the original length', async () => {
+    const fake = fakeBridge({html: '<div class="x">', length: 9000, truncated: true})
+    const content = await run(byName('get_html'), {selector: '.x', maxChars: 15}, fake.call)
+    expect(fake.received[0]).toEqual({tool: 'get_html', params: {selector: '.x', maxChars: 15}})
+    expect((content[0] as {text: string}).text).toContain('TRUNCATED: showing 15 of 9000 chars')
+  })
+
+  test('wait_for_response renders the matched entry or a timeout hint', async () => {
+    const hit = fakeBridge({
+      matched: true,
+      timedOut: false,
+      entry: {method: 'POST', url: 'https://a.com/api/sync', status: 500, mimeType: 'application/json', timestamp: 1, durationMs: 42},
+    })
+    const ok = await run(byName('wait_for_response'), {urlContains: '/api/sync'}, hit.call)
+    expect(ok).toEqual([{type: 'text', text: 'Matched: POST https://a.com/api/sync → 500 application/json (42ms)'}])
+
+    const miss = fakeBridge({matched: false, timedOut: true})
+    const timeout = await run(byName('wait_for_response'), {urlContains: '/api/sync', method: 'POST', status: 200}, miss.call)
+    expect((timeout[0] as {text: string}).text).toContain('no POST 200 request matching "/api/sync"')
+  })
+
+  test('read_network shows durations and pending requests', async () => {
+    const fake = fakeBridge({
+      entries: [
+        {method: 'GET', url: 'https://a.com/slow', timestamp: 2},
+        {method: 'GET', url: 'https://a.com/x', status: 200, mimeType: 'text/html', timestamp: 1, durationMs: 120},
+        {method: 'POST', url: 'https://a.com/y', error: 'cors:MissingAllowOriginHeader', timestamp: 0, durationMs: 8},
+      ],
+    })
+    const content = await run(byName('read_network'), {}, fake.call)
+    expect((content[0] as {text: string}).text).toBe(
+      'GET https://a.com/slow → pending\nGET https://a.com/x → 200 text/html (120ms)\nPOST https://a.com/y → ERR cors:MissingAllowOriginHeader (8ms)',
+    )
+  })
+
   test('reload forwards hard and reports cache bypass', async () => {
     const fake = fakeBridge({url: 'https://e.com/a', title: 'A', loaded: true, hard: true})
     const content = await run(byName('reload'), {hard: true}, fake.call)

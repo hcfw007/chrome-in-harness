@@ -17,8 +17,11 @@ import {
   runActionsParams,
   runActionsResult,
   reloadParams,
+  getHtmlParams,
+  probeParams,
   scrollParams,
   scrollToParams,
+  waitForResponseParams,
   snapshotParams,
   snapshotResult,
   tabSelectParams,
@@ -234,6 +237,21 @@ describe('P3 schemas', () => {
     expect(scrollToParams.safeParse({}).success).toBe(false)
     expect(scrollToParams.safeParse({ref: 'e3', selector: '.row'}).success).toBe(false)
     expect(scrollToParams.safeParse({ref: 'bad'}).success).toBe(false)
+  })
+
+  test('probe / get_html share the exactly-one locator rule; get_html caps maxChars', () => {
+    expect(probeParams.safeParse({text: '导出'}).success).toBe(true)
+    expect(probeParams.safeParse({ref: 'e1', text: 'x'}).success).toBe(false)
+    expect(getHtmlParams.safeParse({selector: 'main', maxChars: 20_000}).success).toBe(true)
+    expect(getHtmlParams.safeParse({selector: 'main', maxChars: 20_001}).success).toBe(false)
+    expect(getHtmlParams.safeParse({}).success).toBe(false)
+  })
+
+  test('wait_for_response requires urlContains and bounds status / lookback', () => {
+    expect(waitForResponseParams.safeParse({urlContains: '/api'}).success).toBe(true)
+    expect(waitForResponseParams.safeParse({urlContains: '/api', status: 500, lookbackMs: 0}).success).toBe(true)
+    expect(waitForResponseParams.safeParse({}).success).toBe(false)
+    expect(waitForResponseParams.safeParse({urlContains: '/api', status: 99}).success).toBe(false)
   })
 
   test('reload accepts hard and waitUntil', () => {

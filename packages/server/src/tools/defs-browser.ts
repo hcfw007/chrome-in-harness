@@ -9,7 +9,11 @@ import {
   getTextResult,
   hoverParams,
   pressKeyParams,
+  getHtmlParamsShape,
+  getHtmlResult,
   locatorParamsError,
+  probeParamsShape,
+  probeResult,
   reloadParams,
   reloadResult,
   scrollToParamsShape,
@@ -318,6 +322,59 @@ const scrollTo = defineTool({
   },
 })
 
+function formatProbe(result: z.infer<typeof probeResult>, args: {selector?: string}): string {
+  if (!result.exists) {
+    const count = args.selector !== undefined ? ` (0 matches for ${JSON.stringify(args.selector)})` : ''
+    return `Not found${count}.`
+  }
+  const lines: string[] = []
+  const head = `<${result.tag ?? '?'}>${result.text !== undefined && result.text.length > 0 ? ` "${result.text}"` : ''}`
+  lines.push(result.count !== undefined && result.count > 1 ? `${head} — first of ${result.count} matches` : head)
+  if (result.rect !== undefined) {
+    const {x, y, width, height} = result.rect
+    const state = result.visible === true ? (result.inViewport === true ? 'visible, in viewport' : 'visible, outside viewport') : 'NOT visible'
+    lines.push(`rect=${x},${y} ${width}x${height} — ${state}`)
+  }
+  const attrs = Object.entries(result.attrs ?? {})
+  if (attrs.length > 0) lines.push(`attrs: ${attrs.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ')}`)
+  return lines.join('\n')
+}
+
+const probe = defineTool({
+  name: 'probe',
+  title: 'Inspect an element without touching it',
+  description:
+    'Check whether an element exists and what state it is in, without scrolling or clicking. Pass exactly one of ' +
+    'ref, selector (CSS, first match; reports the total match count) or text (first visible element whose own text ' +
+    'contains the substring). Returns tag, text, viewport rect (CSS px), visible/inViewport, and allowlisted attributes ' +
+    '(id, class, role, name, type, href, placeholder, title, alt, disabled, aria-*, data-testid). ' +
+    'A missing element is reported as "Not found", not an error. Use this instead of ad-hoc evaluate_script probes.',
+  schema: probeParamsShape,
+  async run(args, call) {
+    const invalid = locatorParamsError(args)
+    if (invalid !== undefined) throw new Error(invalid)
+    const result = await callBridge(call, 'probe', args, probeResult)
+    return toolText(formatProbe(result, args))
+  },
+})
+
+const getHtml = defineTool({
+  name: 'get_html',
+  title: 'Get an element\'s outerHTML',
+  description:
+    'Return the outerHTML of one element (ref, CSS selector, or visible text — exactly one), truncated to maxChars ' +
+    '(default 4000, max 20000). Use it to see markup the accessibility snapshot hides (class names, data attributes, ' +
+    'nested structure of custom controls). Prefer a narrow selector: whole-page HTML wastes context.',
+  schema: getHtmlParamsShape,
+  async run(args, call) {
+    const invalid = locatorParamsError(args)
+    if (invalid !== undefined) throw new Error(invalid)
+    const result = await callBridge(call, 'get_html', args, getHtmlResult)
+    const suffix = result.truncated ? `\n… (TRUNCATED: showing ${result.html.length} of ${result.length} chars; raise maxChars or narrow the selector)` : ''
+    return toolText(result.html + suffix)
+  },
+})
+
 const reload = defineTool({
   name: 'reload',
   title: 'Reload the page',
@@ -347,6 +404,8 @@ export const BROWSER_TOOL_DEFS: readonly ToolDef[] = [
   scroll,
   scrollTo,
   reload,
+  probe,
+  getHtml,
   screenshot,
 ]
 

@@ -1,8 +1,9 @@
 import {addAllowlistDomain} from './allowlist'
 import {runActions} from './batch'
-import {readConsole, readNetwork} from './debug'
+import {readConsole, readNetwork, waitForResponse} from './debug'
 import {evaluateScript} from './evaluate'
 import {getText} from './get-text'
+import {getHtml, probe} from './inspect'
 import {click, clickAt, hover, pressKey, scroll, scrollTo, typeText} from './interact'
 import {ping} from './ping'
 import {invoke, register} from './registry'
@@ -45,3 +46,6 @@ register('run_actions', runActions)
 register('scroll_to', scrollTo)
 register('reload', reload)
 register('reload_extension', reloadExtension)
+register('probe', probe)
+register('get_html', getHtml)
+register('wait_for_response', waitForResponse)

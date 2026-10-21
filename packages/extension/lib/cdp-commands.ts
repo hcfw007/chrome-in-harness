@@ -9,7 +9,7 @@ import {consoleBuffer} from './console-buffer'
 import type {ConsoleLevel} from './console-buffer'
 import type {InputModifier, KeyDispatch} from './keymap'
 import {keyDownText, modifierBitmask, resolveKey} from './keymap'
-import {networkBuffer} from './network-buffer'
+import {describeLoadingFailure, networkBuffer} from './network-buffer'
 
 /** 每个 debugger 会话 enable 一次的 domain 集合（SW 内存级）。 */
 const enabledDomains = new Map<number, Set<string>>()
@@ -117,15 +117,27 @@ function attachSubscribers(tabId: number): void {
     )
   })
   subscribeEvents(tabId, 'Network.responseReceived', (raw) => {
-    const params = raw as {requestId?: string; response?: {status?: number; mimeType?: string}}
+    const params = raw as {requestId?: string; timestamp?: number; response?: {status?: number; mimeType?: string}}
     if (params.requestId === undefined) return
-    networkBuffer.recordResponse(tabId, params.requestId, params.response?.status ?? 0, params.response?.mimeType)
+    networkBuffer.recordResponse(
+      tabId,
+      params.requestId,
+      params.response?.status ?? 0,
+      params.response?.mimeType,
+      params.timestamp,
+    )
   })
   subscribeEvents(tabId, 'Network.loadingFailed', (raw) => {
-    const params = raw as {requestId?: string; errorText?: string; canceled?: boolean}
+    const params = raw as {
+      requestId?: string
+      timestamp?: number
+      errorText?: string
+      canceled?: boolean
+      blockedReason?: string
+      corsErrorStatus?: {corsError?: string}
+    }
     if (params.requestId === undefined) return
-    const reason = params.canceled === true ? 'canceled' : params.errorText ?? 'failed'
-    networkBuffer.recordFailure(tabId, params.requestId, reason)
+    networkBuffer.recordFailure(tabId, params.requestId, describeLoadingFailure(params), params.timestamp)
   })
 }
 
