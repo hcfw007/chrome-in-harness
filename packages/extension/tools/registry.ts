@@ -22,7 +22,8 @@ export async function invoke(name: string, params: unknown): Promise<unknown> {
   if (handler === undefined) {
     throw new Error(`Unknown tool "${name}"`)
   }
-  if (name === 'ping') return handler(params)
+  // ping 不计状态；reload_extension 会杀掉 SW，标 busy 后没人能复位
+  if (name === 'ping' || name === 'reload_extension') return handler(params)
   await setGroupsState('busy')
   try {
     const result = await handler(params)

@@ -41,6 +41,7 @@ describe('TOOL_ERROR_CODES', () => {
     expect(TOOL_NAMES).toContain('run_actions')
     expect(ACTION_STEP_TOOLS).not.toContain('run_actions')
     expect(ACTION_STEP_TOOLS).not.toContain('screenshot')
+    expect(ACTION_STEP_TOOLS).not.toContain('reload_extension')
     expect(ACTION_STEP_TOOLS).toContain('press_key')
   })
 

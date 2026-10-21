@@ -3,6 +3,9 @@ import {
   ensureTabParams,
   ensureTabResult,
   okResult,
+  pingResult,
+  reloadExtensionParams,
+  reloadExtensionResult,
   tabCloseParams,
   tabListParams,
   tabListResult,
@@ -13,7 +16,7 @@ import {
 } from '@chrome-in-harness/protocol'
 import {z} from 'zod'
 import {callBridge, defineTool, toolText} from './types.js'
-import type {ToolDef} from './types.js'
+import type {BridgeCall, ToolDef} from './types.js'
 
 const ping = defineTool({
   name: 'ping',
@@ -104,4 +107,73 @@ const takeoverTab = defineTool({
   },
 })
 
-export const TAB_TOOL_DEFS: readonly ToolDef[] = [ping, tabList, tabNew, tabSelect, tabClose, takeoverTab, ensureTab]
+/** 重载后等待扩展重连的上限：SW 重启 + WS 退避首轮 1s，留足余量。 */
+export const RELOAD_RECONNECT_TIMEOUT_MS = 20_000
+const RELOAD_POLL_INTERVAL_MS = 500
+
+async function readStartedAt(call: BridgeCall): Promise<number | undefined> {
+  const result = pingResult.safeParse(await call('ping', {}))
+  return result.success ? result.data.startedAt : undefined
+}
+
+/**
+ * 轮询 ping 直到扩展重连且 SW 是新的一代（startedAt 变化）。
+ * 旧扩展的 ping 不带 startedAt：只要重连成功就算完成。
+ */
+export async function waitForFreshExtension(
+  call: BridgeCall,
+  previousStartedAt: number | undefined,
+  timeoutMs = RELOAD_RECONNECT_TIMEOUT_MS,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<{reconnected: boolean; startedAt?: number}> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    await sleep(RELOAD_POLL_INTERVAL_MS)
+    try {
+      const startedAt = await readStartedAt(call)
+      if (previousStartedAt === undefined || startedAt === undefined || startedAt !== previousStartedAt) {
+        return startedAt === undefined ? {reconnected: true} : {reconnected: true, startedAt}
+      }
+    } catch {
+      // 断连或重连中：继续轮询
+    }
+  }
+  return {reconnected: false}
+}
+
+const reloadExtension = defineTool({
+  name: 'reload_extension',
+  title: 'Reload the Chrome extension (development)',
+  description:
+    'Reload the unpacked Chrome in Harness extension from disk — same as clicking ↻ on chrome://extensions — ' +
+    'then wait until it reconnects. Use after `npm run build:extension` to pick up new extension code. ' +
+    'Only works for a development (unpacked) install. All refs and debugger sessions are dropped: take a new snapshot afterwards. ' +
+    'Tool schemas do not change: if the build added or changed tool parameters, the MCP server and client session still need a restart.',
+  schema: reloadExtensionParams.shape,
+  async run(args, call) {
+    const before = await readStartedAt(call)
+    const result = await callBridge(call, 'reload_extension', args, reloadExtensionResult)
+    const fresh = await waitForFreshExtension(call, before)
+    if (!fresh.reconnected) {
+      return toolText(
+        `Extension ${result.version} reload was triggered, but it did not reconnect within ${RELOAD_RECONNECT_TIMEOUT_MS / 1000}s. ` +
+          'Check chrome://extensions for load errors (a broken build will not start).',
+      )
+    }
+    const info = await call('ping', {}).catch(() => undefined)
+    const parsed = pingResult.safeParse(info)
+    const version = parsed.success ? parsed.data.version : result.version
+    return toolText(`Extension reloaded and reconnected (version ${version}). Refs are invalidated — snapshot again.`)
+  },
+})
+
+export const TAB_TOOL_DEFS: readonly ToolDef[] = [
+  ping,
+  tabList,
+  tabNew,
+  tabSelect,
+  tabClose,
+  takeoverTab,
+  ensureTab,
+  reloadExtension,
+]

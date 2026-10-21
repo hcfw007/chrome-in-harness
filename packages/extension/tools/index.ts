@@ -6,6 +6,7 @@ import {getText} from './get-text'
 import {click, clickAt, hover, pressKey, scroll, scrollTo, typeText} from './interact'
 import {ping} from './ping'
 import {invoke, register} from './registry'
+import {reloadExtension} from './reload-extension'
 import {requestPermission} from './request-permission'
 import {screenshot} from './screenshot'
 import {navigate, reload, snapshot} from './snapshot'
@@ -43,3 +44,4 @@ register('get_text', getText)
 register('run_actions', runActions)
 register('scroll_to', scrollTo)
 register('reload', reload)
+register('reload_extension', reloadExtension)

@@ -4,7 +4,7 @@ import {BATCH_TOOL_DEFS} from './defs-batch.js'
 import {BROWSER_TOOL_DEFS} from './defs-browser.js'
 import {DEBUG_TOOL_DEFS} from './defs-debug.js'
 import {EVALUATE_TOOL_DEFS} from './defs-evaluate.js'
-import {TAB_TOOL_DEFS} from './defs-tabs.js'
+import {TAB_TOOL_DEFS, waitForFreshExtension} from './defs-tabs.js'
 import type {BridgeCall, ToolDef} from './types.js'
 
 function fakeBridge(result: unknown | Error): {call: BridgeCall; received: Array<{tool: string; params: unknown}>} {
@@ -39,6 +39,41 @@ describe('tool name uniqueness', () => {
 
   test('server exposes exactly the shared tool name contract (no dropped tools)', () => {
     expect([...ALL].map((def) => def.name).sort()).toEqual([...TOOL_NAMES].sort())
+  })
+})
+
+describe('reload_extension def', () => {
+  /** 按调用顺序返回预设结果的桥：ping 依次给出 startedAt 序列。 */
+  function scriptedBridge(pings: Array<unknown | Error>) {
+    const received: string[] = []
+    const call: BridgeCall = async (tool) => {
+      received.push(tool)
+      if (tool === 'reload_extension') return {reloading: true, version: '0.3.0'}
+      const next = pings.shift()
+      if (next instanceof Error) throw next
+      return next
+    }
+    return {call, received}
+  }
+
+  test('waitForFreshExtension resolves once ping reports a new startedAt, skipping disconnects', async () => {
+    const {call} = scriptedBridge([
+      new Error('Chrome extension not connected'),
+      {version: '0.3.0', userAgent: 'x', startedAt: 100},
+      {version: '0.3.0', userAgent: 'x', startedAt: 200},
+    ])
+    const fresh = await waitForFreshExtension(call, 100, 5_000, async () => {})
+    expect(fresh).toEqual({reconnected: true, startedAt: 200})
+  })
+
+  test('waitForFreshExtension accepts any reconnect when the old extension had no startedAt', async () => {
+    const {call} = scriptedBridge([{version: '0.3.0', userAgent: 'x'}])
+    await expect(waitForFreshExtension(call, undefined, 5_000, async () => {})).resolves.toEqual({reconnected: true})
+  })
+
+  test('waitForFreshExtension gives up after the timeout', async () => {
+    const {call} = scriptedBridge(Array.from({length: 50}, () => new Error('not connected')))
+    await expect(waitForFreshExtension(call, 1, 0, async () => {})).resolves.toEqual({reconnected: false})
   })
 })
 

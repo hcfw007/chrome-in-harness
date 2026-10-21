@@ -415,6 +415,20 @@ export const tabListResult = z.object({
 
 export const okResult = z.object({})
 
+export const reloadExtensionParams = z.object({})
+
+export const reloadExtensionResult = z.object({
+  reloading: z.literal(true),
+  version: z.string(),
+})
+
+/** ping 结果：startedAt 用于确认 reload_extension 后 SW 确实是新的一代。 */
+export const pingResult = z.object({
+  version: z.string(),
+  userAgent: z.string(),
+  startedAt: z.number().optional(),
+})
+
 /** 全部工具名，extension 注册与 server 注册共用，防两端名字漂移。 */
 export const TOOL_NAMES = [
   'ping',
@@ -443,16 +457,18 @@ export const TOOL_NAMES = [
   'run_actions',
   'scroll_to',
   'reload',
+  'reload_extension',
 ] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]
 
 /**
- * `run_actions` 允许的步骤工具：排除自身（防无界递归）与 `screenshot`
- * （二进制结果不适合塞进批量文本，应单独调用）。两端共用，避免漂移。
+ * `run_actions` 允许的步骤工具：排除自身（防无界递归）、`screenshot`
+ * （二进制结果不适合塞进批量文本，应单独调用）与 `reload_extension`（重载会杀掉正在执行的批量）。
+ * 两端共用，避免漂移。
  */
 export const ACTION_STEP_TOOLS = TOOL_NAMES.filter(
-  (name) => name !== 'run_actions' && name !== 'screenshot',
+  (name) => name !== 'run_actions' && name !== 'screenshot' && name !== 'reload_extension',
 )
 
 export const actionStepSchema = z.object({
