@@ -235,7 +235,7 @@ describe('renderAxSnapshot', () => {
     tree[0]!.childIds.push('1', '2')
     const result = renderAxSnapshot(tree, {maxChars: 200})
     expect(result.truncated).toBe(true)
-    expect(result.text).toContain('… [truncated at')
+    expect(result.text).toContain('limit=200 chars')
   })
 
   test('clips long names and values', () => {
@@ -457,6 +457,64 @@ describe('renderAxSnapshot', () => {
       weakCandidates: new Map([[61, {tag: 'div', text: 'lang item'}]]),
     })
     expect(result.refs.map((r) => r.backendDOMNodeId)).toEqual([61])
+  })
+
+  test('omits InlineTextBox and StaticText that only repeat the parent name', () => {
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'root'}),
+      node({nodeId: '1', role: 'button', name: '保存', backendDOMNodeId: 11}),
+      node({nodeId: '2', role: 'StaticText', name: '保存'}),
+      node({nodeId: '3', role: 'InlineTextBox', name: '保存'}),
+      node({nodeId: '4', role: 'StaticText', name: '客户列表'}),
+      node({nodeId: '5', role: 'InlineTextBox', name: '客户列表'}),
+    ]
+    tree[0]!.childIds.push('1', '4')
+    tree[1]!.childIds.push('2')
+    tree[2]!.childIds.push('3')
+    tree[4]!.childIds.push('5')
+    const result = renderAxSnapshot(tree)
+    expect(result.text).not.toContain('InlineTextBox')
+    expect(result.text.split('\n')).toEqual([
+      '- RootWebArea "root"',
+      '  - button "保存" [ref=e1]',
+      '  - StaticText "客户列表"',
+    ])
+  })
+
+  test('query never matches InlineTextBox duplicates', () => {
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'root'}),
+      node({nodeId: '1', role: 'StaticText', name: '导出'}),
+      node({nodeId: '2', role: 'InlineTextBox', name: '导出'}),
+    ]
+    tree[0]!.childIds.push('1')
+    tree[1]!.childIds.push('2')
+    const result = renderAxSnapshot(tree, {query: /导出/})
+    expect(result.text).toBe('- StaticText "导出"')
+  })
+
+  test('truncation footer states the char budget and a concrete retry limit', () => {
+    const tree = [node({nodeId: '0', role: 'RootWebArea', name: 'root'})]
+    for (let i = 1; i <= 10; i += 1) {
+      tree.push(node({nodeId: String(i), role: 'button', name: `b${i}`, backendDOMNodeId: 100 + i}))
+      tree[0]!.childIds.push(String(i))
+    }
+    const result = renderAxSnapshot(tree, {maxChars: 40})
+    expect(result.truncated).toBe(true)
+    expect(result.text).toContain('limit=40 chars')
+    expect(result.text).toContain('retry with limit=8000')
+  })
+
+  test('footer reports kept refs and hidden text subtrees when only text was dropped', () => {
+    const tree = [node({nodeId: '0', role: 'RootWebArea', name: 'root'})]
+    for (let i = 1; i <= 20; i += 1) {
+      tree.push(node({nodeId: `t${i}`, role: 'paragraph', name: 'comment '.repeat(40)}))
+      tree[0]!.childIds.push(`t${i}`)
+    }
+    tree.push(node({nodeId: 'b', role: 'button', name: 'Go', backendDOMNodeId: 9}))
+    tree[0]!.childIds.push('b')
+    const result = renderAxSnapshot(tree, {maxChars: 1200})
+    expect(result.text).toMatch(/kept all 1 refs, hid 20 text-only subtrees: limit=1200 chars; retry with limit=/)
   })
 
   test('applyRefToken rewrites refs in text and seeds; old refs would be rejected cross-era', () => {

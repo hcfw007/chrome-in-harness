@@ -56,8 +56,14 @@ export const snapshotParams = z.object({
   query: z.string().min(1).max(200).optional(),
   /** 只输出该 ref 指向节点的子树。 */
   rootRef: z.string().regex(REF_PATTERN).optional(),
-  /** 快照文本的字符预算（覆盖默认 60KB）。 */
-  limit: z.number().int().positive().max(MAX_SNAPSHOT_CHARS).optional(),
+  /** 快照文本的字符预算（覆盖默认 60KB）；不是节点数。 */
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .max(MAX_SNAPSHOT_CHARS)
+    .optional()
+    .describe('Output CHARACTER budget for the snapshot text (default 60000) — not a node count. Values below ~2000 usually show only a few nodes.'),
   ...tabIdField,
 })
 

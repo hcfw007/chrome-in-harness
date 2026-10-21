@@ -8,6 +8,8 @@ describe('buildWeakScanScript', () => {
     expect(script).toContain('cursor === \'pointer\'')
     expect(script).toContain('el.onclick')
     expect(script).toContain('querySelectorAll')
+    // cursor 继承：只认 pointer 的最外层元素
+    expect(script).toContain('parentElement')
     // 不含任何写操作（内部扫描也保持只读纪律）
     for (const banned of ['innerHTML', 'outerHTML', 'insertAdjacentHTML', 'execCommand', 'fetch(']) {
       expect(script).not.toContain(banned)
@@ -37,27 +39,47 @@ describe('parseWeakScanResult', () => {
 })
 
 describe('flattenDomElements', () => {
-  test('pre-order walk collects element nodes with backendNodeId and lowercased tag', () => {
-    const root = {
-      backendNodeId: 1,
-      nodeName: 'HTML',
-      children: [
-        {backendNodeId: 2, nodeName: 'HEAD', children: []},
-        {
-          backendNodeId: 3,
-          nodeName: 'BODY',
-          children: [
-            {backendNodeId: 4, nodeName: 'DIV', children: [{backendNodeId: 5, nodeName: '#text'}]},
-            {nodeName: 'Comment', children: []}, // 无 backendNodeId：跳过
-          ],
-        },
-      ],
-      shadowRoots: [{backendNodeId: 6, nodeName: '#document-fragment', children: []}],
-    }
+  const el = (backendNodeId: number, localName: string, children: unknown[] = [], extra = {}) => ({
+    backendNodeId,
+    nodeType: 1,
+    nodeName: localName.toUpperCase(),
+    localName,
+    children,
+    ...extra,
+  })
+
+  test('pre-order walk collects element nodes only, with lowercased tag', () => {
+    const root = el(1, 'html', [
+      el(2, 'head'),
+      el(3, 'body', [
+        el(4, 'div', [{backendNodeId: 5, nodeType: 3, nodeName: '#text'}]),
+        {backendNodeId: 6, nodeType: 8, nodeName: '#comment'},
+      ]),
+    ])
     const elements = flattenDomElements(root)
-    // shadow fragment 本身不是可点目标，不收集；其子元素照常按文档序收集
     expect(elements.map((e) => e.backendNodeId)).toEqual([1, 2, 3, 4])
     expect(elements.find((e) => e.backendNodeId === 4)?.tag).toBe('div')
+  })
+
+  test('keeps SVG elements whose nodeName is lowercase so later indexes stay aligned', () => {
+    // 回归：SVG 的 nodeName 是小写 svg/path，旧实现按大写判元素会漏掉，后续序号整体错位
+    const svg = {backendNodeId: 10, nodeType: 1, nodeName: 'svg', localName: 'svg', children: [
+      {backendNodeId: 11, nodeType: 1, nodeName: 'path', localName: 'path', children: []},
+    ]}
+    const root = el(1, 'html', [el(2, 'body', [el(3, 'span', [svg]), el(4, 'div')])])
+    const elements = flattenDomElements(root)
+    expect(elements.map((e) => e.tag)).toEqual(['html', 'body', 'span', 'svg', 'path', 'div'])
+  })
+
+  test('does not descend into shadow roots or iframe documents (querySelectorAll does not either)', () => {
+    const root = el(1, 'html', [
+      el(2, 'body', [
+        el(3, 'my-widget', [], {shadowRoots: [{backendNodeId: 30, nodeType: 11, children: [el(31, 'button')]}]}),
+        el(4, 'iframe', [], {contentDocument: {backendNodeId: 40, nodeType: 9, children: [el(41, 'html')]}}),
+        el(5, 'div'),
+      ]),
+    ])
+    expect(flattenDomElements(root).map((e) => e.backendNodeId)).toEqual([1, 2, 3, 4, 5])
   })
 })
 

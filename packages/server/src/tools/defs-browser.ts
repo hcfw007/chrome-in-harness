@@ -61,8 +61,9 @@ const snapshot = defineTool({
     '(buttons/links/textboxes/options + weak controls) are listed first with their subtrees, text-only hits ' +
     'render as single lines after them (same-rank order is DOM order) — so query "Submit" surfaces the button, ' +
     'not comment posts that merely mention it; ' +
-    'rootRef — render only that node\'s subtree; limit — character budget. ' +
-    'Refs are never dropped by truncation: on overflow, text-only subtrees are hidden first.',
+    'rootRef — render only that node\'s subtree; limit — output CHARACTER budget (default 60000), not a node count: ' +
+    'omit it unless you need a smaller response. ' +
+    'On overflow, text-only subtrees are hidden first so refs survive; the footer reports what was dropped and a retry limit.',
   schema: snapshotParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'snapshot', args, snapshotResult)

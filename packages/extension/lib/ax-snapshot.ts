@@ -204,6 +204,22 @@ function renderLine(node: AxNode, depth: number, state: RenderState, weak: boole
   state.charCount += line.length + 1
 }
 
+/**
+ * 纯冗余文本：InlineTextBox（StaticText 的排版分片，名字逐字重复）一律不渲染；
+ * 与父节点同名的 StaticText（button "保存" > StaticText "保存"）也不渲染。
+ * 两者都只重复上一行的信息，却能吃掉近一半字符预算。
+ */
+function isNoiseText(node: AxNode, parentName: string, ctx: WeakContext): boolean {
+  if (node.role === 'InlineTextBox') return true
+  return (
+    node.role === 'StaticText' &&
+    parentName.length > 0 &&
+    node.name === parentName &&
+    !isRefCandidate(node) &&
+    !isWeakCandidate(node, ctx)
+  )
+}
+
 /** 该节点子树里是否藏着 ref 候选（含弱交互）；带 memo 的后序遍历。 */
 function buildSubtreeHasRef(byId: ReadonlyMap<string, AxNode>, ctx: WeakContext): ReadonlyMap<string, boolean> {
   const memo = new Map<string, boolean>()
@@ -251,13 +267,14 @@ function runRenderPass(
     essentials,
   }
 
-  const dfs = (node: AxNode, depth: number): void => {
+  const dfs = (node: AxNode, depth: number, parentName: string): void => {
     if (state.truncated) return
+    if (isNoiseText(node, parentName, ctx)) return
     if (node.ignored) {
       // ignored 节点不渲染自身，但语义子节点可能藏在下面 —— 子级提升到同深度继续遍历
       for (const childId of node.childIds) {
         const child = byId.get(childId)
-        if (child !== undefined) dfs(child, depth)
+        if (child !== undefined) dfs(child, depth, parentName)
       }
       return
     }
@@ -269,14 +286,14 @@ function runRenderPass(
     if (isCollapsible(node, ctx)) {
       for (const childId of node.childIds) {
         const child = byId.get(childId)
-        if (child !== undefined) dfs(child, depth)
+        if (child !== undefined) dfs(child, depth, parentName)
       }
       return
     }
     if (isGhostContainer(node, ctx)) {
       for (const childId of node.childIds) {
         const child = byId.get(childId)
-        if (child !== undefined) dfs(child, depth + 1)
+        if (child !== undefined) dfs(child, depth + 1, parentName)
       }
       return
     }
@@ -293,11 +310,11 @@ function runRenderPass(
     state.visitedNodes += 1
     for (const childId of node.childIds) {
       const child = byId.get(childId)
-      if (child !== undefined) dfs(child, depth + 1)
+      if (child !== undefined) dfs(child, depth + 1, node.name)
     }
   }
 
-  for (const root of roots) dfs(root, 0)
+  for (const root of roots) dfs(root, 0, '')
   return state
 }
 
@@ -309,6 +326,7 @@ function collectQueryHits(
 ): AxNode[] {
   const hits: AxNode[] = []
   const visit = (node: AxNode): void => {
+    if (node.role === 'InlineTextBox') return
     if (!node.ignored) {
       let self: boolean
       try {
@@ -410,7 +428,9 @@ function renderQuerySnapshot(
   }
 
   let text = lines.join('\n')
-  if (truncated) text += `\n… [truncated at ${pass.visitedNodes} nodes / ${refs.length} refs]`
+  if (truncated) {
+    text += `\n… [truncated at ${pass.visitedNodes} nodes / ${refs.length} refs: limit=${pass.maxChars} chars; ${truncationHint(pass.maxChars)}]`
+  }
   return {text, refs, truncated}
 }
 
@@ -438,9 +458,26 @@ export function renderAxSnapshot(nodes: readonly AxNode[], options: RenderOption
   const first = runRenderPass(renderById, roots, options, false, ctx)
   if (!first.truncated) return finalize(first, undefined)
   const second = runRenderPass(renderById, roots, options, true, ctx)
-  if (second.truncated) return finalize(second, `… [truncated at ${second.visitedNodes} nodes / ${second.refs.length} refs]`)
+  const hint = truncationHint(second.maxChars)
+  if (second.truncated) {
+    return finalize(
+      second,
+      `… [truncated at ${second.visitedNodes} nodes / ${second.refs.length} refs: limit=${second.maxChars} chars exhausted; ${hint}]`,
+    )
+  }
   // refs 全保住了，但纯文本子树被隐藏 —— 仍算 truncated（内容确实丢了）
-  return finalize(second, `… [truncated at ${second.skippedTextNodes} text-only nodes to keep interactive refs]`)
+  return finalize(
+    second,
+    `… [kept all ${second.refs.length} refs, hid ${second.skippedTextNodes} text-only subtrees: limit=${second.maxChars} chars; ${hint}]`,
+  )
+}
+
+/** 截断提示的下一步建议：预算未到上限就给具体重试值，已到上限则改用 query/rootRef 收窄。 */
+function truncationHint(maxChars: number): string {
+  if (maxChars < MAX_CHARS) {
+    return `retry with limit=${Math.min(MAX_CHARS, Math.max(maxChars * 4, 8_000))} or narrow with query/rootRef`
+  }
+  return 'narrow with query/rootRef'
 }
 
 function finalize(state: RenderState, footer: string | undefined): SnapshotRender {

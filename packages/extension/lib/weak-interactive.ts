@@ -37,7 +37,11 @@ export function buildWeakScanScript(limit = WEAK_SCAN_LIMIT): string {
         let weak = false
         try {
           if (el.onclick !== null) weak = true
-          else if (getComputedStyle(el).cursor === 'pointer') weak = true
+          else if (getComputedStyle(el).cursor === 'pointer') {
+            // cursor 是继承属性：只认 pointer 的最外层元素，后代继承来的不算独立控件
+            const parent = el.parentElement
+            weak = parent === null || getComputedStyle(parent).cursor !== 'pointer'
+          }
         } catch {}
         if (weak) {
           // 弹出层内的候选拔宽：允许带 role 祖先（下拉项常包在 dialog/listbox 里）；
@@ -79,25 +83,27 @@ export interface FlatDomElement {
   readonly tag: string
 }
 
-/** 前序遍历 DOM.getDocument 的节点树，抽出元素节点（与 querySelectorAll('*') 同为文档序）。 */
+const ELEMENT_NODE = 1
+
+/**
+ * 前序遍历 DOM.getDocument 的节点树，抽出元素节点，必须与页面内 querySelectorAll('*') 一一对齐：
+ * - 按 nodeType 判元素：SVG 等外来命名空间元素的 nodeName 是小写（svg/path），按大小写判会漏掉，
+ *   导致首个图标之后整批序号错位、候选全被标签校验丢弃；
+ * - 不进 shadowRoots / contentDocument：querySelectorAll 不穿透 shadow DOM 和 iframe。
+ */
 export function flattenDomElements(root: unknown): readonly FlatDomElement[] {
   const out: FlatDomElement[] = []
   const visit = (node: unknown): void => {
     if (typeof node !== 'object' || node === null) return
     const record = node as Record<string, unknown>
-    if (typeof record['backendNodeId'] === 'number') {
-      const nodeName = typeof record['nodeName'] === 'string' ? record['nodeName'] : ''
-      if (nodeName.length > 0 && nodeName === nodeName.toUpperCase()) {
-        // DOM.getDocument 的元素节点 nodeName 是大写标签（html、#text 之类非元素除外）
-        out.push({backendNodeId: record['backendNodeId'], tag: nodeName.toLowerCase()})
-      }
+    if (record['nodeType'] === ELEMENT_NODE && typeof record['backendNodeId'] === 'number') {
+      const name = typeof record['localName'] === 'string' && record['localName'].length > 0
+        ? record['localName']
+        : typeof record['nodeName'] === 'string' ? record['nodeName'] : ''
+      out.push({backendNodeId: record['backendNodeId'], tag: name.toLowerCase()})
     }
     if (Array.isArray(record['children'])) {
       for (const child of record['children']) visit(child)
-    }
-    // shadow root（pierce 模式挂在 shadowRoots 上）同样按文档序
-    if (Array.isArray(record['shadowRoots'])) {
-      for (const shadow of record['shadowRoots']) visit(shadow)
     }
   }
   visit(root)
