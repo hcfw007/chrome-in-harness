@@ -8,13 +8,27 @@ Chrome in Harness uses `chrome.debugger` (CDP) for one purpose: **driving target
 in the managed workspace**, with sessions reused between tool calls. It is the mechanism
 that powers:
 
-- `snapshot` — reading the accessibility tree (`Accessibility.getFullAXTree`)
-- `click` / `hover` / `type` / `scroll` — dispatching trusted input events (`Input.*`)
-- `screenshot` — capturing the viewport (`Page.captureScreenshot`)
-- `read_console` / `read_network` — capturing console + network metadata
-- `evaluate_script` — executing a **restricted** script in the page context
-- `wait` — polling for a condition in the page
+- `snapshot` — reading the accessibility tree (`Accessibility.getFullAXTree`) plus a
+  read-only DOM pass that finds clickable custom controls (`DOM.getDocument`, `Runtime.evaluate`)
+- `click` / `click_at` / `hover` / `type` / `scroll` — dispatching trusted input events (`Input.*`);
+  `click_at` first reads which element sits under the point, read-only
+- `scroll_to` — scrolling one element into the center of the viewport
+- `probe` / `get_html` — read-only inspection of one element: existence, visibility, position,
+  text, a fixed allowlist of attributes, or its outerHTML (truncated to a bounded size)
+- `screenshot` — capturing the viewport (`Page.captureScreenshot`), downscaled locally to
+  CSS pixels
+- `navigate` / `reload` — loading a URL or reloading the current page (`Page.navigate`,
+  `Page.reload`, optionally bypassing the HTTP cache)
+- `read_console` / `read_network` / `wait_for_response` — capturing console output and network
+  **metadata** (method, URL, status, MIME type, duration, failure reason); response bodies and
+  request/response headers are never read
+- `evaluate_script` — executing a **restricted** script in the page context (run with a user
+  gesture so page handlers that need user activation work)
+- `wait` — polling for a condition in the page, or for network quiet
 - `type mode="set"` — writing the Monaco editor buffer via its page-exposed API
+
+`reload_extension` (unpacked development installs only) reloads the extension itself via
+`chrome.runtime.reload()`; it does not use CDP and is refused for store installs.
 
 CDP is the only way to synthesize real (isTrusted) input events and read the
 accessibility tree from a service worker, which is what makes this tool work as a
@@ -24,7 +38,9 @@ general-purpose browser agent harness.
 
 - The debugger session is **only ever attached to a tab the user has explicitly placed
   into the "Chrome in Harness" group** (the tool's managed workspace), or created via
-  `tab_new`.
+  `tab_new`. `takeover_tab`, which the agent may call only when the user asks, moves an
+  open tab into that group without activating, focusing, navigating it or moving it to
+  another window, and it refuses tabs that belong to the user's own tab groups.
 - Attachment begins when a tool needs CDP and is reused for subsequent calls. Console
   and network metadata are collected continuously while attached, into bounded
   in-memory buffers, even between calls. Closing the tab, cancelling debugging, or
@@ -51,7 +67,7 @@ remove the corresponding stored allowlist entry.
 ## Data handling
 
 See [docs/PRIVACY.md](../docs/PRIVACY.md): the extension-to-server bridge is local and
-network response bodies are never captured. Tool results are sent to the MCP client,
+network response bodies and headers are never captured; `data:` URLs are not recorded. Tool results are sent to the MCP client,
 which may forward them to a remote AI provider. The extension and bridge contain no
 telemetry that sends data to the author.
 

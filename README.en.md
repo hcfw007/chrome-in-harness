@@ -15,13 +15,13 @@ An open-source, Claude-in-Chrome-style browser MCP: through a Chrome extension, 
 
 ## Features
 
-- **See the page**: accessibility-tree snapshots, element text, and screenshots; elements located via versioned refs.
-- **Act on the page**: navigate, click, hover, scroll, type text, press keys; coordinate-click fallback for targets refs can't hit (iframes / canvas).
+- **See the page**: accessibility-tree snapshots, element text, and screenshots whose pixels match CSS coordinates; elements located via versioned refs. `probe` / `get_html` inspect one element's state and outerHTML read-only.
+- **Act on the page**: navigate, reload (optionally bypassing the cache), click, hover, scroll or scroll to an element, type text, press keys. Coordinate clicks are the fallback for targets refs can't hit (iframes / canvas) and report the element under the point.
 - **Edit code**: indentation-preserving multi-line input, plus full-buffer writes through the page's Monaco API; key-pipeline health checks and collapsed-editor recovery.
 - **Manage tabs**: create, switch, and close tabs, or explicitly take over an existing tab; operations are confined to the "Chrome in Harness" managed group.
 - **Tab sessions**: `ensure_tab` hands out a reusable tab handle — each agent keeps its own tab, and a closed tab is recreated automatically, so tabs don't multiply.
 - **Batch execution**: `run_actions` runs a sequence of tools in one call (e.g. typing key by key), cutting MCP round trips.
-- **Wait & debug**: wait for text / selector / URL / editor readiness, read console messages and network request metadata, run restricted page JS.
+- **Wait & debug**: wait for text / selector / URL / editor readiness, network quiet, or a specific API response; read console messages and network request metadata (with durations, never response bodies); run restricted page JS. Errors carry a code and a next step.
 - **Stay out of your way**: new tabs always open in the background; input reaches background tabs via focus emulation; when a human is needed (login, captcha), the agent asks you to switch tabs yourself.
 
 ## Architecture
@@ -77,10 +77,10 @@ These limits do not defend against local malicious processes: the MCP endpoint h
 - **wait_for_response**: wait until a request whose URL contains a substring (optionally with status / method) completes — metadata only; a 2s default lookback makes click-then-wait race-free.
 - **probe / get_html**: read-only element inspection by ref / selector / visible text (exactly one) — probe returns existence, match count, visibility, rect, text and allowlisted attributes; get_html returns outerHTML (4000 chars by default, max 20000).
 - **wait**: wait for text / CSS selector / URL substring (in-page promise polling, default 8s, max 30s) or `networkIdle:true` (no new request for 500ms); at most one condition, and passing only `timeoutMs` is a plain delay; timeouts return `{matched:false}` instead of erroring.
-- **reload_extension**: development only — reloads the unpacked extension from disk (same as ↻ on `chrome://extensions`) and waits for it to reconnect, so an agent can rebuild and verify extension code without manual clicks. Store installs are refused. Tool schemas are unaffected: parameter changes still need a server + client session restart.
+- **reload_extension**: development only. It reloads the unpacked extension from disk (same as ↻ on `chrome://extensions`) and waits for it to reconnect, so an agent can rebuild and verify extension code without manual clicks. Store installs are refused. It does not refresh tool schemas: after changing tool parameters, restart the server and have the client re-fetch the tool list (see "After upgrading the MCP server" below).
 - **scroll_to**: scroll an element to the viewport center by ref / CSS selector / visible text (exactly one); returns its post-scroll viewport rect and `inViewport`.
 - **reload**: reload the current page with navigate's wait strategies; `hard:true` bypasses the HTTP cache (check a deploy without cache-busting query params that change the route); all refs are invalidated.
-- **screenshot**: scaled by 1/dpr so image pixels equal viewport CSS pixels — measured coordinates go straight into `click_at`; reports `width/height/dpr` as text.
+- **screenshot**: scaled by 1/dpr so image pixels equal viewport CSS pixels — measured coordinates go straight into `click_at`; reports `width/height/dpr` as text. If downscaling is unavailable the raw image is returned and the text says to divide coordinates by dpr.
 - **add_allowlist_domain**: extends the allowlist directly (no confirmation window). Usually unnecessary — unknown domains pop the confirmation window automatically.
 - **evaluate_script**: restricted `Runtime.evaluate` in the page context. The blacklist rejects network access (fetch/XHR/WebSocket/sendBeacon), eval/Function, navigation (location/window.open), document.write, debugger, and `chrome.*`; `awaitPromise:true` requires an async IIFE; oversized JSON results are truncated; runs with a user gesture, so a page `window.open` triggered by `element.click()` inside the script is not popup-blocked.
 - **request_permission**: fires the native `chrome.permissions.request` prompt for a domain and writes the grant into the storage allowlist. Call only when the user explicitly asks.
@@ -88,6 +88,7 @@ These limits do not defend against local malicious processes: the MCP endpoint h
 - **ensure_tab / run_actions**: see [Tab conventions](#tab-conventions) and [Batch execution](#batch-execution) below.
 
 - **snapshot**: `chrome.debugger` + CDP `Accessibility.getFullAXTree`, rendered as Playwright ariaSnapshot-style indented text with `[ref=eN-<token>]` on interactive elements; prefer ref-based interaction to avoid selector drift. Coordinate clicks and focused-element input can skip refs.
+- **Snapshot noise**: `InlineTextBox`, `StaticText` that repeats its parent's name, and icon-font glyphs are omitted. Custom clickable controls (cursor:pointer / onclick divs, lis and spans) are marked `[weak]` and get refs, except unnamed wrappers around a real control (such as the two divs around an antd select). `limit` is an **output character budget** (default 60000), not a node count. When it runs out, text-only subtrees are hidden first so refs survive, and the footer says what was dropped and suggests a retry `limit`.
 - **Ref lifecycle**: refs bind to a tab's latest snapshot, format `e<N>-<token>` (token = worker era + snapshot version); navigation / tab close / debugger detach invalidates them; cross-era or stale refs fail with an explicit `STALE_REF` (no silent mis-targeting); same-era snapshot supersede retries once by element identity; after the SW is killed, `NO_SNAPSHOT` guides a re-snapshot.
 - **click snapshot**: `click({ref, snapshot: true})` waits two animation frames after the click (300ms cap on background tabs) and returns a fresh snapshot — for pages that re-render on click and invalidate every ref, saving a `snapshot` round trip; content rendered after an async fetch still needs `wait` first. If the click lands but the snapshot fails, the failure is reported without erroring, so the click is not retried by mistake.
 - **click_at**: coordinate-click fallback when refs can't hit (iframe/canvas/icon-only containers); viewport CSS pixels; out-of-bounds coordinates error explicitly; hit-tests before clicking and reports the element under the point plus its nearest interactive ancestor (tells mis-aimed / covered clicks from inert handlers).
@@ -190,7 +191,7 @@ You should see:
 
 Or simply ask the model in your MCP client to call `ping` — it should return the extension version and userAgent.
 
-> **After upgrading the MCP server you must restart the client session**: clients like OpenCode / Claude Code register tool schemas at session start and don't hot-reload. Old sessions keep validating against old schemas and reject new params/tools — restarting the session fixes it. Same for refs: snapshot refs carry a token suffix (like `e3-a7k2`) and old refs across sessions/worker restarts are explicitly rejected (`STALE_REF`) — just re-snapshot.
+> **After upgrading the MCP server, make the client re-fetch the tool list**: clients like OpenCode / Claude Code cache tool schemas when they connect and don't hot-reload, so an old connection keeps validating against old schemas and rejects new params/tools. Restarting the client session fixes it. In OpenCode you can instead disconnect and reconnect that MCP server without a new session (via `/mcps`, or `opencode api post '/api/experimental/mcp/<name>/disconnect'` followed by `.../connect`). Same for refs: snapshot refs carry a token suffix (like `e3-a7k2`) and old refs across sessions/worker restarts are explicitly rejected (`STALE_REF`) — just re-snapshot.
 
 ### Persistent service (optional)
 
@@ -220,7 +221,23 @@ New tabs (`tab_new`) always open in the background without stealing focus. When 
 
 Repetitive sequences (e.g. typing with per-character `press_key`) can use `run_actions` in **one call**:
 pass `actions: [{tool, params}, ...]`; a top-level `tabId` is injected into steps that omit their own. Steps run in order and later steps observe earlier changes;
-execution stops at the first failure unless `continueOnError: true` (which continues and records per-step errors). Max 50 steps per call; nesting `run_actions` is rejected, and `screenshot` is not allowed inside a batch.
+execution stops at the first failure unless `continueOnError: true` (which continues and records per-step errors). Max 50 steps per call; nesting `run_actions` is rejected, and `screenshot` and `reload_extension` are not allowed inside a batch.
+Each step's params are validated in the extension against that tool's protocol schema, the same as a direct call (for example `click_at` still needs `coordinates: true`). The batch's overall timeout is extended by the sum of the steps' `timeoutMs`.
+
+### Error format
+
+Errors from this server read `CODE: reason — next step`; follow the next step. The common ones:
+
+| Code | Meaning |
+|---|---|
+| `DOMAIN_CONFIRMATION_REQUIRED` | A domain confirmation window is open; retry after the user clicks Allow |
+| `TAB_NOT_MANAGED` / `TAB_CLOSED` / `TAB_IN_USER_GROUP` | The tab is outside the managed group / closed / inside one of the user's own groups (`takeover_tab` never breaks those up) |
+| `STALE_REF` / `NO_SNAPSHOT` | The ref is outdated or the extension restarted; take a new snapshot |
+| `EXTENSION_DISCONNECTED` | The extension is not connected; right after a disconnect it is usually reconnecting, so retry in a few seconds |
+| `TOOL_TIMEOUT` | The extension did not answer in time: busy page, a blocking dialog, or DevTools holding the debugger |
+| `DEBUGGER_BUSY` | DevTools is open on that tab; close it and retry |
+
+Errors without such a code (for example a declined permission prompt, or the tool list disappearing) come from the MCP client or host, not this server.
 
 ### Domain access mode
 
