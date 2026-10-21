@@ -447,6 +447,62 @@ describe('renderAxSnapshot', () => {
     expect(result.refs[0]).toMatchObject({backendDOMNodeId: 51, weak: true})
   })
 
+  test('anonymous weak wrappers around a real control get no ref (antd select double wrapper)', () => {
+    // test-center 实测：generic [weak] > generic [weak] > combobox —— 只有 combobox 该有 ref
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'root'}),
+      node({nodeId: '1', role: 'generic', backendDOMNodeId: 11}),
+      node({nodeId: '2', role: 'generic', backendDOMNodeId: 12}),
+      node({nodeId: '3', role: 'combobox', backendDOMNodeId: 13}),
+      node({nodeId: '4', role: 'StaticText', name: '筛选客户类型'}),
+    ]
+    tree[0]!.childIds.push('1')
+    tree[1]!.childIds.push('2')
+    tree[2]!.childIds.push('3', '4')
+    const result = renderAxSnapshot(tree, {
+      weakCandidates: new Map([[11, {tag: 'div', text: ''}], [12, {tag: 'div', text: ''}]]),
+    })
+    expect(result.refs.map((r) => r.backendDOMNodeId)).toEqual([13])
+    expect(result.text).not.toContain('[weak]')
+    expect(result.text).toContain('筛选客户类型')
+  })
+
+  test('a weak wrapper keeps its ref when it only contains text or icons (custom clickable rows, menu items)', () => {
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'root'}),
+      node({nodeId: '1', role: 'generic', backendDOMNodeId: 21}),
+      node({nodeId: '2', role: 'image', name: 'search'}),
+      node({nodeId: '3', role: 'StaticText', name: '客户列表'}),
+    ]
+    tree[0]!.childIds.push('1')
+    tree[1]!.childIds.push('2', '3')
+    const result = renderAxSnapshot(tree, {weakCandidates: new Map([[21, {tag: 'div', text: '客户列表'}]])})
+    expect(result.refs.map((r) => r.backendDOMNodeId)).toEqual([21])
+  })
+
+  test('a named weak node keeps its ref even if it wraps a control', () => {
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'root'}),
+      node({nodeId: '1', role: 'generic', name: '页码', backendDOMNodeId: 31}),
+      node({nodeId: '2', role: 'combobox', name: '页码', backendDOMNodeId: 32}),
+    ]
+    tree[0]!.childIds.push('1')
+    tree[1]!.childIds.push('2')
+    const result = renderAxSnapshot(tree, {weakCandidates: new Map([[31, {tag: 'div', text: '页码'}]])})
+    expect(result.refs.map((r) => r.backendDOMNodeId)).toEqual([31, 32])
+  })
+
+  test('drops glyph-only StaticText from icon fonts (private-use code points)', () => {
+    const tree = [
+      node({nodeId: '0', role: 'RootWebArea', name: 'root'}),
+      node({nodeId: '1', role: 'StaticText', name: '\uE6A1'}),
+      node({nodeId: '2', role: 'StaticText', name: '\u200B'}),
+      node({nodeId: '3', role: 'StaticText', name: '客户管理'}),
+    ]
+    tree[0]!.childIds.push('1', '2', '3')
+    expect(renderAxSnapshot(tree).text.split('\n')).toEqual(['- RootWebArea "root"', '  - StaticText "客户管理"'])
+  })
+
   test('weak candidates are not compacted away even when anonymous', () => {
     const tree = [
       node({nodeId: '0', role: 'RootWebArea', name: 'root'}),

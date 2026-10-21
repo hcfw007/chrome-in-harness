@@ -29,6 +29,8 @@ const WEAK_ELIGIBLE_ROLES = new Set(['generic', 'none', 'image', 'listitem'])
 const POPUP_ROLES = new Set(['dialog', 'alertdialog', 'menu', 'listbox'])
 /** 弹出层内可给弱 ref 的角色（StaticText 保持 CDP 原样大小写）。 */
 const POPUP_TEXT_ROLES = new Set([...WEAK_ELIGIBLE_ROLES, 'StaticText'])
+/** 只含空白、零宽字符或私用区字形（图标字体）的文本：对定位没有信息量。 */
+const GLYPH_ONLY = /^[\s\u200B-\u200D\u2060\uFEFF\uE000-\uF8FF]*$/u
 /** query 模式纯文本命中的输出上限（超出报数，绝不挤占交互命中预算）。 */
 const MAX_QUERY_TEXT_HITS = 40
 
@@ -90,10 +92,41 @@ function isRefCandidate(node: AxNode): boolean {
   )
 }
 
-/** 弱交互判定上下文：DOM 扫描候选 + 弹出层归属表（nodeId → 在弹出容器子树内）。 */
+/** 弱交互判定上下文：DOM 扫描候选 + 弹出层归属表 + 「后代里有强交互控件」表。 */
 interface WeakContext {
   readonly candidates: ReadonlyMap<number, WeakInfo> | undefined
   readonly popup: ReadonlyMap<string, boolean>
+  /** nodeId → 后代（不含自身）里存在强交互控件（button/textbox/combobox… 或 clickable/haspopup）。 */
+  readonly strongBelow: ReadonlyMap<string, boolean>
+}
+
+/** 强交互：真正的控件。不含 heading/img 这类锚点——图标包装层的点击就是要落到包装层上。 */
+function isStrongInteractive(node: AxNode): boolean {
+  return INTERACTIVE_ROLES.has(node.role) || node.clickable || node.hasPopup
+}
+
+function buildStrongBelowMap(byId: ReadonlyMap<string, AxNode>): ReadonlyMap<string, boolean> {
+  const memo = new Map<string, boolean>()
+  /** node 自身或任一后代是强交互控件；带 memo 的后序遍历。 */
+  const hasStrong = (node: AxNode): boolean => {
+    const cached = memo.get(node.nodeId)
+    if (cached !== undefined) return cached
+    memo.set(node.nodeId, false) // 防环
+    const result = isStrongInteractive(node) || node.childIds.some((id) => {
+      const child = byId.get(id)
+      return child !== undefined && hasStrong(child)
+    })
+    memo.set(node.nodeId, result)
+    return result
+  }
+  const below = new Map<string, boolean>()
+  for (const node of byId.values()) {
+    below.set(node.nodeId, node.childIds.some((id) => {
+      const child = byId.get(id)
+      return child !== undefined && hasStrong(child)
+    }))
+  }
+  return below
 }
 
 /** memo 化收集：nodeId → 自身是弹出容器或任一祖先是（只存 true，缺席即不在弹出层内）。 */
@@ -122,12 +155,17 @@ function buildWeakContext(
   byId: ReadonlyMap<string, AxNode>,
   candidates: ReadonlyMap<number, WeakInfo> | undefined,
 ): WeakContext {
-  return {candidates, popup: buildPopupMap(byId)}
+  return {candidates, popup: buildPopupMap(byId), strongBelow: buildStrongBelowMap(byId)}
 }
 
-/** 弱交互：无强信号但可点（DOM 扫描命中 / 弹出层内带名文本 / focusable 的 div/li/span 映射角色）。 */
+/**
+ * 弱交互：无强信号但可点（DOM 扫描命中 / 弹出层内带名文本 / focusable 的 div/li/span 映射角色）。
+ * 无名且后代已有强交互控件的包装层不算——antd 的下拉/输入框外面常套两层 cursor:pointer 的 div，
+ * 真正可点的是里面的 combobox/textbox，包装层的 ref 只是噪音（点它与点里面的控件效果相同）。
+ */
 function isWeakCandidate(node: AxNode, ctx: WeakContext): boolean {
   if (isRefCandidate(node)) return false
+  if (node.name.length === 0 && ctx.strongBelow.get(node.nodeId) === true) return false
   if (node.backendDOMNodeId !== undefined && ctx.candidates?.has(node.backendDOMNodeId) === true) return true
   if (
     ctx.popup.get(node.nodeId) === true &&
@@ -211,6 +249,8 @@ function renderLine(node: AxNode, depth: number, state: RenderState, weak: boole
  */
 function isNoiseText(node: AxNode, parentName: string, ctx: WeakContext): boolean {
   if (node.role === 'InlineTextBox') return true
+  // 图标字体（iconfont 等）的文字落在 Unicode 私用区，渲染成看不见的 StaticText ""
+  if (node.role === 'StaticText' && GLYPH_ONLY.test(node.name) && !isWeakCandidate(node, ctx)) return true
   return (
     node.role === 'StaticText' &&
     parentName.length > 0 &&

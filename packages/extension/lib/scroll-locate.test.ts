@@ -1,5 +1,5 @@
 import {describe, expect, test} from 'vitest'
-import {buildScrollToScript, parseScrollToReceipt} from './scroll-locate.js'
+import {TEXT_CONTROL_SELECTOR, buildScrollToScript, parseScrollToReceipt} from './scroll-locate.js'
 
 describe('buildScrollToScript', () => {
   test('selector mode queries the selector and centers it', () => {
@@ -13,6 +13,14 @@ describe('buildScrollToScript', () => {
     expect(script).toContain('createTreeWalker')
     expect(script).toContain('"导出"')
     expect(script).toContain('r.width > 0 && r.height > 0')
+  })
+
+  test('text mode climbs to the enclosing control (antd <button><span>text</span></button>)', () => {
+    const script = buildScrollToScript({text: '导 出'})
+    expect(script).toContain('el.closest(CONTROL) || el')
+    expect(TEXT_CONTROL_SELECTOR.split(',')).toEqual(expect.arrayContaining(['button', 'a[href]', '[role="button"]', '[role="option"]']))
+    // 不泛匹配 [role]：否则会上溯到 row / region 这类容器
+    expect(TEXT_CONTROL_SELECTOR.split(',')).not.toContain('[role]')
   })
 
   test('scripts never write to the DOM or touch the network', () => {

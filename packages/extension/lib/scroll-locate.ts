@@ -26,6 +26,14 @@ export const DESCRIBE_ELEMENT = `function (el) {
  * 页面内脚本：按 selector 或可见文本找元素 → scrollIntoView(center) → 回执；找不到返回 null。
  * 文本定位取文档序首个「直接子文本节点包含该串」的可见元素（避免命中 body 这类祖先）。
  */
+/** 文本定位上溯的交互祖先：原生控件与常见 ARIA 控件角色（不含 [role] 泛匹配，避免上溯到 region/row）。 */
+export const TEXT_CONTROL_SELECTOR = [
+  'button', 'a[href]', 'label', 'summary', 'select', 'option',
+  '[role="button"]', '[role="link"]', '[role="tab"]', '[role="option"]',
+  '[role="menuitem"]', '[role="menuitemcheckbox"]', '[role="menuitemradio"]',
+  '[role="checkbox"]', '[role="radio"]', '[role="switch"]', '[role="treeitem"]',
+].join(',')
+
 export interface PageLocator {
   readonly selector?: string
   readonly text?: string
@@ -34,15 +42,18 @@ export interface PageLocator {
 /** 页面内表达式：按 selector 或可见文本找到元素（找不到为 null）。probe / get_html 共用。 */
 export function buildFindElementExpression(target: PageLocator): string {
   if (target.selector !== undefined) return `document.querySelector(${JSON.stringify(target.selector)})`
+  // 文本常包在控件内部的 span 里（antd 的 <button><span>导 出</span></button>）：
+  // 命中后上溯到最近的交互祖先，回执描述的才是用户会点的那个元素
   return `(() => {
     const needle = ${JSON.stringify(target.text ?? '')}
+    const CONTROL = ${JSON.stringify(TEXT_CONTROL_SELECTOR)}
     const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT)
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       if (!node.nodeValue || !node.nodeValue.includes(needle)) continue
       const el = node.parentElement
       if (!el) continue
       const r = el.getBoundingClientRect()
-      if (r.width > 0 && r.height > 0) return el
+      if (r.width > 0 && r.height > 0) return el.closest(CONTROL) || el
     }
     return null
   })()`
