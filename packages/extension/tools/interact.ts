@@ -1,7 +1,8 @@
 /** ref 交互工具：click / hover / type / press_key / scroll。ref 三态解析 + CDP 真实输入。 */
-import {clickAtParams, hoverParams, scrollToParams} from '@chrome-in-harness/protocol'
+import {TOOL_ERROR_CODES, clickAtParams, hoverParams, scrollToParams} from '@chrome-in-harness/protocol'
 import {ensureAttached} from '../lib/cdp'
 import {
+  callOnNode,
   clearFocusedNativeValue,
   describeNodeRect,
   dispatchClick,
@@ -26,8 +27,15 @@ import {buildHitTestScript, parseHitTestResult} from '../lib/hit-test'
 import type {HitInfo} from '../lib/hit-test'
 import {resolveKey, selectAllModifier} from '../lib/keymap'
 import type {InputModifier} from '../lib/keymap'
+import {buildOcclusionFn, parseOcclusion} from '../lib/occlusion'
+import type {OcclusionResult} from '../lib/occlusion'
 import {imagePointToCss, lastScreenshot} from '../lib/screenshot-geometry'
-import {buildScrollToScript, CENTER_AND_DESCRIBE, parseScrollToReceipt} from '../lib/scroll-locate'
+import {
+  buildFindElementExpression,
+  buildScrollToScript,
+  CENTER_AND_DESCRIBE,
+  parseScrollToReceipt,
+} from '../lib/scroll-locate'
 import {planVerbatim} from '../lib/verbatim'
 import {authorizeTab} from './access'
 import {parseToolParams} from './params'
@@ -57,6 +65,33 @@ async function locate(tabId: number, backendDOMNodeId: number): Promise<{x: numb
 }
 
 /**
+ * 滚进视野、取中心点，并确认该点没被其他元素盖住；被盖住就抛 ELEMENT_COVERED，不派发任何输入。
+ * 检查本身失败（页面忙、脚本异常）按可点处理：遮挡检查只能拦下确定的误点，不能制造新失败。
+ */
+export async function locateUncovered(
+  tabId: number,
+  backendDOMNodeId: number,
+  tool: string,
+): Promise<{x: number; y: number}> {
+  const point = await locate(tabId, backendDOMNodeId)
+  let occlusion: OcclusionResult
+  try {
+    occlusion = parseOcclusion(await callOnNode(tabId, backendDOMNodeId, buildOcclusionFn(point.x, point.y)))
+  } catch {
+    return point
+  }
+  if (occlusion.kind === 'covered') {
+    const pointer = tool === 'hover' ? 'the pointer would rest on' : 'a real click would land on'
+    throw new Error(
+      `${TOOL_ERROR_CODES.ELEMENT_COVERED}: ${tool} sent no input — the target's center (${Math.round(point.x)}, ${Math.round(point.y)}) ` +
+        `is covered by ${occlusion.by}, so ${pointer} that element instead (clicking a modal mask closes the modal). ` +
+        'Close or finish the overlay first, or act on an element inside it.',
+    )
+  }
+  return point
+}
+
+/**
  * 页面上是否有「打开且可见」的对话框。
  * 只查存在性会误判：不少实现（如本地回归页）关闭 dialog 仅切 display:none，节点常驻 DOM，
  * 导致点击明明已生效仍触发键盘重试（对已隐藏节点 DOM.focus 报 not focusable）。
@@ -81,7 +116,7 @@ export const click: ToolHandler = async (params) => {
   const {ref, tabId, snapshot: wantSnapshot} = params as {ref: string; tabId?: number; snapshot?: boolean}
   const target = await prepareInputTab(tabId)
   const dialogStillOpen = await withRef(target.tabId, ref, async (entry) => {
-    const {x, y} = await locate(target.tabId, entry.backendDOMNodeId)
+    const {x, y} = await locateUncovered(target.tabId, entry.backendDOMNodeId, 'click')
     // 只点一次、绝不自动补击：弹窗里「添加一行」这类按钮点完弹窗本就保持打开，
     // 补击会产生重复副作用。点击前后都有对话框时只回报给调用方，由其按快照判断。
     const dialogBefore = await evaluateJson<boolean>(target.tabId, HAS_OPEN_DIALOG)
@@ -168,7 +203,7 @@ export const hover: ToolHandler = async (params) => {
   if (raw.ref !== undefined) {
     const ref = raw.ref
     return withRef(target.tabId, ref, async (entry) => {
-      const {x, y} = await elementCenter(target.tabId, entry.backendDOMNodeId)
+      const {x, y} = await locateUncovered(target.tabId, entry.backendDOMNodeId, 'hover')
       await dispatchHover(target.tabId, x, y)
       return {x, y}
     })
@@ -192,6 +227,19 @@ export const hover: ToolHandler = async (params) => {
   }
   const x = receipt.rect.x + receipt.rect.width / 2
   const y = receipt.rect.y + receipt.rect.height / 2
+  // 与 ref 路径同一判定：中心点被遮罩/浮层盖住时指针落不到目标上
+  const occlusion = parseOcclusion(
+    await evaluateJson<unknown>(
+      target.tabId,
+      `(() => { const el = ${buildFindElementExpression(locator)}; return el ? (${buildOcclusionFn(x, y)}).call(el) : null })()`,
+    ).catch(() => null),
+  )
+  if (occlusion.kind === 'covered') {
+    throw new Error(
+      `${TOOL_ERROR_CODES.ELEMENT_COVERED}: hover sent no input — the element's center (${Math.round(x)}, ${Math.round(y)}) ` +
+        `is covered by ${occlusion.by}. Close or finish the overlay first, or hover an element inside it.`,
+    )
+  }
   await dispatchHover(target.tabId, x, y)
   return {x, y, ...(receipt.tag !== undefined ? {tag: receipt.tag} : {}), ...(receipt.text !== undefined ? {text: receipt.text} : {})}
 }
@@ -379,7 +427,7 @@ export const typeText: ToolHandler = async (params) => {
     throw new Error('ref is required unless focus="none"')
   }
   await withRef(target.tabId, raw.ref, async (entry) => {
-    const {x, y} = await locate(target.tabId, entry.backendDOMNodeId)
+    const {x, y} = await locateUncovered(target.tabId, entry.backendDOMNodeId, 'type')
     await dispatchClick(target.tabId, x, y)
     await prepareKeyboardPath()
     if (mode === 'verbatim') await typeVerbatim()

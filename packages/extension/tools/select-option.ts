@@ -8,11 +8,9 @@ import {ensureAttached} from '../lib/cdp'
 import {
   describeNodeRect,
   dispatchClick,
-  elementCenter,
   ensureFocusEmulation,
   evaluateJson,
   insertText,
-  scrollIntoViewIfNeeded,
 } from '../lib/cdp-commands'
 import {
   buildFindOptionScript,
@@ -25,6 +23,7 @@ import {
 } from '../lib/option-locate'
 import type {FindOptionReceipt} from '../lib/option-locate'
 import {authorizeTab} from './access'
+import {locateUncovered} from './interact'
 import {parseToolParams} from './params'
 import {withRef} from './ref-recovery'
 
@@ -82,8 +81,8 @@ export const selectOption: ToolHandler = async (params) => {
     // 下拉已展开时不再点触发器：再点一次会把它关掉
     const alreadyOpen = (await evaluateJson<unknown>(target.tabId, HAS_VISIBLE_OPTIONS)) === true
     if (!alreadyOpen) {
-      await scrollIntoViewIfNeeded(target.tabId, entry.backendDOMNodeId)
-      const {x, y} = await elementCenter(target.tabId, entry.backendDOMNodeId)
+      // 触发器被遮罩盖住时不点：点在 antd Modal 遮罩上会把整个弹窗关掉
+      const {x, y} = await locateUncovered(target.tabId, entry.backendDOMNodeId, 'select_option')
       await dispatchClick(target.tabId, x, y)
     }
     if (raw.search === true) await insertText(target.tabId, raw.text)

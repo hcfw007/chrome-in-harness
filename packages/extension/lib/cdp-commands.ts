@@ -365,8 +365,22 @@ async function restoreWindowIfNeeded(windowId: number): Promise<void> {
   }
 }
 
+/** CDP 对 display:none / 已移出渲染树的节点返回的报文片段。 */
+const NO_LAYOUT_MARKER = 'does not have a layout object'
+
 export async function scrollIntoViewIfNeeded(tabId: number, backendNodeId: number): Promise<void> {
-  await send(tabId, 'DOM.scrollIntoViewIfNeeded', {backendNodeId})
+  try {
+    await send(tabId, 'DOM.scrollIntoViewIfNeeded', {backendNodeId})
+  } catch (error) {
+    // 原样透传的 CDP 报文（{"code":-32000,...}）对模型不可行动：元素常是随弹窗关闭被隐藏了
+    const message = error instanceof Error ? error.message : String(error)
+    if (!message.includes(NO_LAYOUT_MARKER)) throw error
+    throw new Error(
+      'element is not rendered (display:none or removed — e.g. its modal or dropdown was closed); ' +
+        'take a new snapshot to see the current page',
+      {cause: error},
+    )
+  }
 }
 
 interface BoxModelResult {
@@ -802,6 +816,20 @@ async function resolveBackendNode(tabId: number, backendNodeId: number): Promise
     throw new Error('could not resolve the referenced element to a JS object (it may be stale); call snapshot again')
   }
   return objectId
+}
+
+/**
+ * 在 ref 节点上执行一个 this 绑定函数（遮挡检查等）。与 describeNodeRect 同一路径，
+ * 区别只是函数自带 this，不再包一层 (fn)(this)。
+ */
+export async function callOnNode(tabId: number, backendNodeId: number, functionDeclaration: string): Promise<unknown> {
+  const objectId = await resolveBackendNode(tabId, backendNodeId)
+  const result = await send<{result?: {value?: unknown}}>(tabId, 'Runtime.callFunctionOn', {
+    objectId,
+    functionDeclaration,
+    returnByValue: true,
+  })
+  return result.result?.value
 }
 
 /** 按 ref 读取子树 innerText（get_text 的取数路径）。 */

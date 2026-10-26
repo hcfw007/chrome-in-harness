@@ -30,6 +30,8 @@ export const TOOL_ERROR_CODES = {
   KEY_PIPELINE_DEAD: 'KEY_PIPELINE_DEAD',
   /** 焦点不在可编辑元素上，输入的文本不会落盘（type 显式报错而非静默成功）。 */
   INPUT_NOT_LANDED: 'INPUT_NOT_LANDED',
+  /** 目标中心点被其他元素盖住（遮罩/浮层），真实点击会落到那个元素上，故不派发。 */
+  ELEMENT_COVERED: 'ELEMENT_COVERED',
   /** 目标 tab 已关闭（常见于会话间隔后沿用旧 tabId）——开新 tab 或改用现存 tab。 */
   TAB_CLOSED: 'TAB_CLOSED',
   /** takeover 目标在用户自建的其他分组里：不擅自拆用户的分组，请用户先移出。 */

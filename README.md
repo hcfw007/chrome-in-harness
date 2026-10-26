@@ -90,7 +90,7 @@ Chrome 扩展 · MV3 service worker / WXT
 - **snapshot**：`chrome.debugger` + CDP `Accessibility.getFullAXTree`，渲染成 Playwright ariaSnapshot 风格的缩进文本，交互元素带 `[ref=eN-<token>]`；优先用 ref 交互，减少选择器漂移。坐标点击、当前焦点输入等场景可不使用 ref
 - **快照降噪**：不输出 `InlineTextBox`、与父节点同名的 `StaticText`、图标字体字形；自定义可点控件（cursor:pointer / onclick 的 div/li/span）标 `[weak]` 并给 ref，但包着真实控件（如 antd 下拉外的两层 div）的无名包装层不给。`limit` 是**输出字符预算**（默认 60000）而非节点数；预算不够时先隐藏纯文本子树保住 ref，末尾提示说明丢了什么并给出建议的重试 `limit`
 - **ref 生命周期**：ref 绑定 tab 的最近一次快照，格式 `e<N>-<token>`（token 编码 worker 代 + 快照版本）；导航/关 tab/debugger 分离即失效；跨 worker 代或过期一律显式 `STALE_REF`（拒绝静默错点）；同代快照更替时交互工具按元素身份自动重试一次；SW 被杀后报 `NO_SNAPSHOT` 引导重新 snapshot
-- **click snapshot**：`click({ref, snapshot: true})` 点击后等两帧渲染（后台 tab 上限 300ms）再返回新快照，适合点击即重渲染、旧 ref 全部失效的页面，省一次 `snapshot` 往返；异步取数后才渲染的内容仍应先 `wait`。点击已生效但取快照失败时只提示失败、不报错，避免误重点。点击只派发一次、从不自动重试；点击前后都有打开的对话框时结果标注 `dialog is still open`
+- **click snapshot**：`click({ref, snapshot: true})` 点击后等两帧渲染（后台 tab 上限 300ms）再返回新快照，适合点击即重渲染、旧 ref 全部失效的页面，省一次 `snapshot` 往返；异步取数后才渲染的内容仍应先 `wait`。点击已生效但取快照失败时只提示失败、不报错，避免误重点。点击前检查目标中心点是否被遮罩或浮层盖住，被盖住就报 `ELEMENT_COVERED` 不点（避免点到 Modal 遮罩把弹窗关掉）；点击只派发一次、从不自动重试；点击前后都有打开的对话框时结果标注 `dialog is still open`
 - **click_at**：ref 命中不了时（iframe/Canvas/icon-only 容器）的坐标点击兜底，默认视口 CSS 像素；`space: "image"` 时按该 tab 最近一次截图换算，截图后视口变过或坐标超出图片会显式报错；越界显式报错；点击前 hit-test，回执落点元素与最近可交互祖先（可区分坐标偏移 / 被遮挡 / handler 无反应）
 - **press_key**：单键/组合键（`ctrl`/`alt`/`shift`/`meta` + 键名，支持 F1-F24），可选先 focus 指定 ref；派发前有默认动作探针——临时离屏输入框验证按键真的产生字符插入（监听器探针检测不出「事件送达但默认动作被丢弃」的假活，resize/失焦后的典型死法），死了自动重开焦点仿真/激活自愈，仍死显式报 `KEY_PIPELINE_DEAD`
 - **get_text**：优先读 AX value（虚拟滚动编辑器全文唯一可靠读数），innerText 兜底，上限 8KB
@@ -235,6 +235,7 @@ agent 应优先使用 `ensure_tab`，保存返回的 `{tabId, url, reused}`，�
 | `DOMAIN_CONFIRMATION_REQUIRED` | 已弹出域名确认窗口，等用户点「允许」后重试 |
 | `TAB_NOT_MANAGED` / `TAB_CLOSED` / `TAB_IN_USER_GROUP` | 标签不在受管组 / 已关闭 / 在用户自建分组里（`takeover_tab` 不会拆它） |
 | `STALE_REF` / `NO_SNAPSHOT` | ref 过期或扩展重启过，重新 snapshot |
+| `ELEMENT_COVERED` | 目标中心点被遮罩或浮层盖住，`click` / `type` / `hover` / `select_option` 没有派发输入；先关掉遮挡层，或改操作遮挡层里的元素 |
 | `EXTENSION_DISCONNECTED` | 扩展未连接；刚断开时多半在重连，稍等几秒重试 |
 | `TOOL_TIMEOUT` | 扩展超时未回包：页面卡住、有弹窗挡住，或 DevTools 占用了 debugger |
 | `DEBUGGER_BUSY` | 该标签已打开 DevTools，关掉后重试 |
