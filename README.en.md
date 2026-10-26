@@ -211,7 +211,7 @@ npx @chrome-in-harness/launcher service uninstall  # stop and remove
 ### Tab conventions
 
 Agents should prefer `ensure_tab`, save the returned `{tabId, url, reused}`, and pass that `tabId` explicitly on every subsequent call.
-Calling `ensure_tab({tabId, url?})` again reuses the tab if it still exists and is managed — no navigation, no focus change; if it was closed, a background tab is recreated and a new id returned.
+Calling `ensure_tab({tabId, url?})` again reuses the tab if it still exists and is managed — no navigation, no focus change; if it was closed, a background tab is recreated and a new id returned along with `replacedTabId` (the old id) and a note to save the new one; if the tab still exists but left the managed group, it fails with `TAB_NOT_MANAGED` instead of replacing it — call `ensure_tab` without `tabId` for a fresh tab.
 The `url` is only used at creation; to change pages on a reused tab call `navigate`. Without a `url`, the new tab opens at `about:blank`. A tab the user dragged out of the managed group is an error, never auto-replaced.
 Each agent keeps its own tab id; use `tab_new` only when multiple tabs are explicitly needed — the server provides no agent identity or locking.
 

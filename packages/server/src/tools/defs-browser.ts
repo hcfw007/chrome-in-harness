@@ -324,12 +324,14 @@ const wait = defineTool({
   name: 'wait',
   title: 'Wait for a condition',
   description:
-    'Wait until a condition holds on the page: text appears in the body, a CSS selector matches, the URL contains a substring, ' +
+    'Wait until a condition holds on the page: text appears in the body, a CSS selector matches (use this before ' +
+    'evaluate_script after a re-render so the DOM you read exists), the URL contains a substring, ' +
     'or editorRendered:true (a Monaco-style editor exists with height > 40px, width > 200px and a non-empty ' +
     'visible view-line — resize-collapsed editors are auto-recovered via monaco layout(); guards against both ' +
     'collapsed/hidden instances and 5x5 narrow-strip false readiness after window resizes), ' +
     'or networkIdle:true (no new network request for 500ms — e.g. after a click that triggers async fetches). ' +
-    'At most one condition per call; pass only timeoutMs for a plain delay (prefer a real condition when one exists). ' +
+    'At most one condition per call. To sleep, pass ONLY timeoutMs (e.g. {timeoutMs: 1000}, max 30000) — no dummy ' +
+    'text condition needed; prefer a real condition when one exists. ' +
     'Returns {matched, timedOut} — a timeout is not an error; snapshot afterwards to see the current state.',
   // 注册无 refine 的 shape（refine 会破坏 tools/list 的 JSON schema）；条件约束在 run 里落地。
   schema: waitParamsShape,

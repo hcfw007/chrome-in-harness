@@ -189,6 +189,8 @@ export const ensureTabResult = z.object({
   tabId: TAB_ID,
   url: z.string(),
   reused: z.boolean(),
+  /** 传入的 tabId 已关闭、因而新建了替代 tab 时，原 tabId（调用方必须改存新 id）。 */
+  replacedTabId: TAB_ID.optional(),
 })
 
 export const tabSelectParams = z.object({tabId: TAB_ID})

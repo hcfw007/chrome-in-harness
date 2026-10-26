@@ -406,7 +406,11 @@ export const scrollTo: ToolHandler = async (params) => {
   const parsed = parseScrollToReceipt(receipt)
   if (parsed === null) {
     const what = raw.selector !== undefined ? `selector ${JSON.stringify(raw.selector)}` : `text ${JSON.stringify(raw.text)}`
-    throw new Error(`scroll_to: no visible element matches ${what}; snapshot or wait for it to render first`)
+    throw new Error(
+      `scroll_to: no visible element matches ${what}. scroll_to only searches what is rendered now: ` +
+        'if the target is on another page of a paginated table or not yet rendered by a virtual/lazy list, ' +
+        'go to that page or scroll the list (scroll with a ref inside it) first; otherwise wait for it to render.',
+    )
   }
   return parsed
 }

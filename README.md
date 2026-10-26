@@ -211,7 +211,7 @@ npx @chrome-in-harness/launcher service uninstall  # 停止并移除
 ### 标签页使用约定
 
 agent 应优先使用 `ensure_tab`，保存返回的 `{tabId, url, reused}`，后续操作始终显式传入自己的 `tabId`。
-再次调用 `ensure_tab({tabId, url?})` 时，原标签存在且仍受管则复用，不导航、不切前台；已关闭时后台补建并返回新 ID。
+再次调用 `ensure_tab({tabId, url?})` 时，原标签存在且仍受管则复用，不导航、不切前台；已关闭时后台补建并返回新 ID，结果带 `replacedTabId`（原 ID）和一句提醒改存新 ID 的说明；标签仍在但已移出受管组时报 `TAB_NOT_MANAGED`，不会擅自替换，可改为不带 `tabId` 调用拿一个新标签。
 `url` 仅用于创建，复用后需要换页面应调用 `navigate`；不传 `url` 时新标签开在 `about:blank`。标签被用户移出受管组会报错，不自动接管或补建。
 不同 agent 各自维护标签 ID，只有明确需要多标签时才使用 `tab_new`；服务不提供 agent 身份识别或独占锁。
 

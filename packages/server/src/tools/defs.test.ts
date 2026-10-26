@@ -529,6 +529,14 @@ describe('tab defs', () => {
     expect(byName('ensure_tab').description).toContain('Save')
   })
 
+  test('ensure_tab tells the agent its old tab was closed and to save the replacement id', async () => {
+    const fake = fakeBridge({tabId: 9, url: 'about:blank', reused: false, replacedTabId: 4})
+    const content = await run(byName('ensure_tab'), {tabId: 4}, fake.call)
+    const parsed = JSON.parse((content[0] as {text: string}).text)
+    expect(parsed).toMatchObject({tabId: 9, reused: false, replacedTabId: 4})
+    expect(parsed.note).toBe('tab 4 was closed; opened tab 9 instead. Use tabId 9 from now on.')
+  })
+
   test('takeover_tab confirms the tab is managed', async () => {
     const fake = fakeBridge({tabId: 4, url: 'https://leetcode.com/problems/two-sum/'})
     const content = await run(byName('takeover_tab'), {tabId: 4}, fake.call)

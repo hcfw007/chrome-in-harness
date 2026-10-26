@@ -104,7 +104,9 @@ export const ensureTab: ToolHandler = async (params) => {
     if (existing !== undefined) {
       if (!(await isTabManaged(tabId))) {
         throw toolError(TOOL_ERROR_CODES.TAB_NOT_MANAGED,
-          `tab ${tabId} is outside the 'Chrome in Harness' group. It was not replaced or taken over; ask the user how to proceed.`)
+          `tab ${tabId} still exists but is outside the 'Chrome in Harness' group (the user may have moved it, ` +
+            'or the group was lost across a browser restart); it was not replaced or taken over. ' +
+            'Call ensure_tab without tabId to get a fresh managed tab, or ask the user before takeover_tab.')
       }
       return {tabId, url: existing.url ?? '', reused: true}
     }
@@ -114,7 +116,12 @@ export const ensureTab: ToolHandler = async (params) => {
     throw toolError(TOOL_ERROR_CODES.TAB_NOT_MANAGED,
       `created tab ${created.id} could not be placed in the managed group; do not retry creation blindly.`)
   }
-  return {tabId: created.id, url: created.pendingUrl ?? created.url ?? url ?? '', reused: false}
+  return {
+    tabId: created.id,
+    url: created.pendingUrl ?? created.url ?? url ?? '',
+    reused: false,
+    ...(tabId !== undefined ? {replacedTabId: tabId} : {}),
+  }
 }
 
 export const tabSelect: ToolHandler = async (params) => {
