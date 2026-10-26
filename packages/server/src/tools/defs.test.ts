@@ -166,6 +166,12 @@ describe('browser defs', () => {
     expect((content[0] as {text: string}).text).toBe('Clicked e3 (a dialog is still open)')
   })
 
+  test('type reports the resulting field value', async () => {
+    const fake = fakeBridge({mode: 'insert', insertedLines: 0, value: '懒加载销售'})
+    const content = await run(byName('type'), {ref: 'e2', text: '懒加载销售', clear: true}, fake.call)
+    expect((content[0] as {text: string}).text).toBe('Typed into e2 (cleared first)\nValue now: "懒加载销售"')
+  })
+
   test('click_at forwards coordinates and confirms', async () => {
     const fake = fakeBridge({})
     const content = await run(byName('click_at'), {x: 2466, y: 22, coordinates: true}, fake.call)

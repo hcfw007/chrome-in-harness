@@ -94,7 +94,7 @@ Chrome 扩展 · MV3 service worker / WXT
 - **click_at**：ref 命中不了时（iframe/Canvas/icon-only 容器）的坐标点击兜底，视口 CSS 像素，越界显式报错；点击前 hit-test，回执落点元素与最近可交互祖先（可区分坐标偏移 / 被遮挡 / handler 无反应）
 - **press_key**：单键/组合键（`ctrl`/`alt`/`shift`/`meta` + 键名，支持 F1-F24），可选先 focus 指定 ref；派发前有默认动作探针——临时离屏输入框验证按键真的产生字符插入（监听器探针检测不出「事件送达但默认动作被丢弃」的假活，resize/失焦后的典型死法），死了自动重开焦点仿真/激活自愈，仍死显式报 `KEY_PIPELINE_DEAD`
 - **get_text**：优先读 AX value（虚拟滚动编辑器全文唯一可靠读数），innerText 兜底，上限 8KB
-- **type**：`mode="insert"`（默认）/ `mode="verbatim"`（Monaco 类编辑器逐行 insertText 还原缩进，无 trim）/ `mode="set"`（monaco `setValue` 原子写整个缓冲——绕开键盘/焦点/IME 通路，窗口失焦、键路死亡、编辑器塌缩都不影响；ref 可省，单编辑器页面自动选中）；焦点不在可编辑元素时显式报 `INPUT_NOT_LANDED` 而非静默假成功；返回插入点概要 `{line, col}` 供模型自查
+- **type**：`mode="insert"`（默认）/ `mode="verbatim"`（Monaco 类编辑器逐行 insertText 还原缩进，无 trim）/ `mode="set"`（monaco `setValue` 原子写整个缓冲——绕开键盘/焦点/IME 通路，窗口失焦、键路死亡、编辑器塌缩都不影响；ref 可省，单编辑器页面自动选中）；焦点不在可编辑元素时显式报 `INPUT_NOT_LANDED` 而非静默假成功；`clear:true` 用全选（macOS Cmd+A，其余 Ctrl+A）+ Delete 清空，清不掉时报错而不追加；返回插入点概要 `{line, col}` 和输入后的实际值供模型自查
 - **wait editorRendered**：Monaco 渲染完成 = 高度 > 40px 且宽度 > 200px 且有非空 view-line——resize 后塌缩成 5×5 窄条的假就绪不再放过；检测到塌缩自动按父容器尺寸强制 `layout()` 重排救回（无参 layout 会按自身窄宽度自我维持，必须显式传维度）
 - **输入路径**：常规点击与输入通过 CDP `Input.*` 派发浏览器事件；`type mode="set"` 则直接调用 Monaco API，不模拟逐键输入。不保证网站将自动化操作视为人工操作
 - **域名白名单 + 运行时确认**：`chrome.storage.local` 持久化，扩展侧在 attach 前校验，空名单 = 拒绝全部；规则 `example.com` 匹配自身与任意深度子域。访问未授权域名时**自动弹出确认窗口**（显示域名与来源 URL，允许/拒绝），工具即时返回 `DOMAIN_CONFIRMATION_REQUIRED`（非阻塞），用户点「允许」后重试即通过——无需手动改配置

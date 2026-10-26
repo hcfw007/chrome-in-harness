@@ -114,7 +114,7 @@ export const pressKeyParams = z.object({
  * mode='verbatim' 一次性整段插入且拒绝 submit（避免 Monaco 自动缩进/括号自动补全）；
  * mode='set' 走 monaco setValue 原子写整个缓冲（绕开键盘/焦点/IME 通路，窗口失焦也稳），
  * 此时 ref 可省（页面仅一个编辑器时自动选中）；
- * clear=true 输入前先 Ctrl+A + Delete 清空；focus='none' 跳过隐式点击。
+ * clear=true 输入前先全选（macOS Cmd+A，其余 Ctrl+A）+ Delete 清空，残留则报错；focus='none' 跳过隐式点击。
  */
 export const typeParams = z.object({
   ref: z.string().regex(REF_PATTERN).optional(),
@@ -137,6 +137,8 @@ export const typeResult = z.object({
     .optional(),
   /** mode="set" 时编辑器曾塌缩并被自动 layout() 恢复（resize 后 5×5 窄条的防御性自愈）。 */
   layoutRecovered: z.boolean().optional(),
+  /** 输入后焦点元素的实际值（原生 input/textarea/contentEditable）；Monaco 或 submit 后缺省。 */
+  value: z.string().optional(),
 })
 
 export const getTextParams = z.object({

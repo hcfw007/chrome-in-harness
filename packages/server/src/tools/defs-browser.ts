@@ -184,12 +184,16 @@ const type = defineTool({
     'mode:"verbatim" guarantees exact reproduction through the input pipeline: per-line insertion with newline ' +
     'handling that bypasses Monaco auto-indent and bracket auto-closing. ' +
     'submit is rejected with verbatim/set (activate the Run/Submit button by its ref instead). ' +
-    'clear:true empties the field first (focus + Ctrl+A + Delete); redundant and rejected with set. ' +
+    'submit:true presses Enter after typing — inside a form or modal this usually submits or closes it; ' +
+    'leave it off for filter fields in dialogs. ' +
+    'clear:true empties the field first (select-all — Cmd+A on macOS, Ctrl+A elsewhere — then Delete) and fails with ' +
+    'INPUT_NOT_LANDED instead of appending if content remains; redundant and rejected with set. ' +
     'focus:"none" skips the implicit click: with ref it only DOM.focuses the element (caret stays put); ' +
     'without ref it types into whatever is focused. ' +
     'Landing is verified: when focus is not on an editable element the call fails with INPUT_NOT_LANDED ' +
     'instead of silently discarding the text. Returns the caret landing point insertionPoint {line, col} ' +
-    '(1-based) and insertedLines for self-checking where the text landed.',
+    '(1-based) and insertedLines for self-checking where the text landed, plus the field\'s resulting value ' +
+    '(native inputs/textareas/contenteditable; omitted for Monaco and after submit).',
   schema: typeParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'type', args, typeResult)
@@ -204,8 +208,9 @@ const type = defineTool({
     }
     if (result.layoutRecovered === true) bits.push('layout recovered')
     const suffix = bits.length > 0 ? ` (${bits.join(', ')})` : ''
+    const value = result.value !== undefined ? `\nValue now: ${JSON.stringify(result.value)}` : ''
     return toolText(
-      `Typed into ${args.ref ?? 'focused element'}${suffix}${args.submit ? ' and pressed Enter' : ''}`,
+      `Typed into ${args.ref ?? 'focused element'}${suffix}${args.submit ? ' and pressed Enter' : ''}${value}`,
     )
   },
 })

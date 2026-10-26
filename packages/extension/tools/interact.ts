@@ -2,6 +2,7 @@
 import {clickAtParams, scrollToParams} from '@chrome-in-harness/protocol'
 import {ensureAttached} from '../lib/cdp'
 import {
+  clearFocusedNativeValue,
   describeNodeRect,
   dispatchClick,
   dispatchHover,
@@ -15,6 +16,7 @@ import {
   getViewportMetrics,
   insertText,
   monacoSetValue,
+  readFocusedValue,
   readInputFocus,
   scrollIntoViewIfNeeded,
   viewportCenter,
@@ -22,7 +24,7 @@ import {
 import type {ClickOptions, CursorPosition, FocusState} from '../lib/cdp-commands'
 import {buildHitTestScript, parseHitTestResult} from '../lib/hit-test'
 import type {HitInfo} from '../lib/hit-test'
-import {resolveKey} from '../lib/keymap'
+import {resolveKey, selectAllModifier} from '../lib/keymap'
 import type {InputModifier} from '../lib/keymap'
 import {buildScrollToScript, CENTER_AND_DESCRIBE, parseScrollToReceipt} from '../lib/scroll-locate'
 import {planVerbatim} from '../lib/verbatim'
@@ -152,14 +154,24 @@ export const hover: ToolHandler = async (params) => {
   return {}
 }
 
-/** 清空当前焦点元素：Ctrl+A 全选 + Delete（Monaco 与原生输入框都认）。 */
+/**
+ * 清空当前焦点元素：全选（附 selectAll 编辑命令）+ Delete。
+ * 原生输入框键盘清空后仍有残留时，走原型 value setter 兜底（React 受控组件也能收到）；
+ * 仍清不掉就显式报错，绝不把新文本追加到旧内容后面。
+ */
 async function clearFocused(tabId: number): Promise<void> {
   const selectAll = resolveKey('a')
-  if (!selectAll.ok) return
-  await dispatchKey(tabId, selectAll.info, ['ctrl'])
   const del = resolveKey('Delete')
-  if (!del.ok) return
+  if (!selectAll.ok || !del.ok) return
+  await dispatchKey(tabId, selectAll.info, [selectAllModifier(navigator.userAgent)], ['selectAll'])
   await dispatchKey(tabId, del.info, [])
+  const remaining = await readFocusedValue(tabId)
+  if (remaining === null || remaining === '') return
+  if (await clearFocusedNativeValue(tabId)) return
+  throw new Error(
+    `INPUT_NOT_LANDED: clear:true could not empty the field (still "${remaining.slice(0, 80)}") — ` +
+      'select its content with press_key and Delete, then type without clear.',
+  )
 }
 
 export const typeText: ToolHandler = async (params) => {
@@ -290,15 +302,19 @@ export const typeText: ToolHandler = async (params) => {
     mode: 'insert' | 'verbatim'
     insertedLines: number
     insertionPoint?: CursorPosition
+    value?: string
   }> => {
     const after = await readFocusSafe()
     assertLanded(after, 'after')
+    // submit 后焦点可能已离开输入框（表单提交/弹窗关闭），回读的不是目标元素，不报
+    const value = raw.submit === true ? null : await readFocusedValue(target.tabId).catch(() => null)
     return {
       mode,
       insertedLines,
       ...(after !== null && after.insertionPoint !== null
         ? {insertionPoint: after.insertionPoint}
         : {}),
+      ...(value !== null ? {value} : {}),
     }
   }
 

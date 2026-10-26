@@ -516,6 +516,53 @@ export async function readInputFocus(tabId: number): Promise<FocusState> {
   }
 }
 
+/** 回读值上限：只用于让调用方核对输入结果，不回传整篇长文。 */
+const MAX_FOCUSED_VALUE = 2_000
+
+/**
+ * 读焦点元素的当前值：原生 input/textarea 读 value，contentEditable 读 innerText。
+ * Monaco（隐藏 textarea 只含当前行）与其他元素返回 null。
+ */
+export async function readFocusedValue(tabId: number): Promise<string | null> {
+  const script =
+    '(function () {' +
+    '  var el = document.activeElement;' +
+    '  if (!el) return null;' +
+    '  try { if (el.closest && el.closest(".monaco-editor")) return null } catch (err) {}' +
+    '  var tag = (el.tagName || "").toLowerCase();' +
+    '  if (tag === "input" || tag === "textarea") return String(el.value);' +
+    // 清空后的 contentEditable 常残留一个 <br>：innerText 为 "\n" 但 textContent 为空，按空值处理
+    '  if (el.isContentEditable === true) return el.textContent === "" ? "" : String(el.innerText);' +
+    '  return null;' +
+    '})()'
+  const value = await evaluateJson<unknown>(tabId, script)
+  if (typeof value !== 'string') return null
+  return value.length > MAX_FOCUSED_VALUE ? `${value.slice(0, MAX_FOCUSED_VALUE)}…` : value
+}
+
+/**
+ * 键盘清空失败时的兜底：用原型上的 value setter 置空并派发 input/change。
+ * 直接赋 el.value 会被 React 受控组件吞掉，走原型 setter 才能让框架收到变更。
+ * 仅处理原生 input/textarea；返回是否已清空。
+ */
+export async function clearFocusedNativeValue(tabId: number): Promise<boolean> {
+  const script =
+    '(function () {' +
+    '  var el = document.activeElement;' +
+    '  if (!el) return false;' +
+    '  var tag = (el.tagName || "").toLowerCase();' +
+    '  if (tag !== "input" && tag !== "textarea") return false;' +
+    '  var proto = tag === "input" ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;' +
+    '  var desc = Object.getOwnPropertyDescriptor(proto, "value");' +
+    '  if (!desc || !desc.set) return false;' +
+    '  desc.set.call(el, "");' +
+    '  el.dispatchEvent(new Event("input", {bubbles: true}));' +
+    '  el.dispatchEvent(new Event("change", {bubbles: true}));' +
+    '  return el.value === "";' +
+    '})()'
+  return (await evaluateJson<unknown>(tabId, script)) === true
+}
+
 /**
  * 键盘通路探针 v2：验证按键的**默认动作**真的生效（字符插入），而非监听器收到事件。
  * 背景：resize/失焦后可能「事件送达（监听器触发）但默认动作被丢弃」——F13 监听探针
@@ -697,8 +744,17 @@ function parseMonacoSetResult(raw: unknown): MonacoSetResult {
   return {kind: 'no-monaco', insertionPoint: null, editorCount: count, layoutRecovered: false}
 }
 
-/** 一个键的完整 press：keyDown（组合键无 text，走 rawKeyDown）+ keyUp。 */
-export async function dispatchKey(tabId: number, info: KeyDispatch, modifiers: readonly InputModifier[]): Promise<void> {
+/**
+ * 一个键的完整 press：keyDown（组合键无 text，走 rawKeyDown）+ keyUp。
+ * commands 随 keyDown 下发编辑命令（如 selectAll）：macOS 上合成快捷键不会触发
+ * 系统编辑命令，单靠 modifiers 的 Cmd+A 在原生输入框里不生效。
+ */
+export async function dispatchKey(
+  tabId: number,
+  info: KeyDispatch,
+  modifiers: readonly InputModifier[],
+  commands: readonly string[] = [],
+): Promise<void> {
   const mask = modifierBitmask(modifiers)
   const text = keyDownText(info, mask)
   const base = {
@@ -712,6 +768,7 @@ export async function dispatchKey(tabId: number, info: KeyDispatch, modifiers: r
     type: text === undefined ? 'rawKeyDown' : 'keyDown',
     ...base,
     ...(text !== undefined ? {text, unmodifiedText: text} : {}),
+    ...(commands.length > 0 ? {commands: [...commands]} : {}),
   })
   await send(tabId, 'Input.dispatchKeyEvent', {type: 'keyUp', ...base})
 }

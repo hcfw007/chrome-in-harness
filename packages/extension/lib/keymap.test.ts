@@ -1,5 +1,13 @@
 import {describe, expect, test} from 'vitest'
-import {keyDownText, modifierBitmask, resolveKey} from './keymap.js'
+import {keyDownText, modifierBitmask, resolveKey, selectAllModifier} from './keymap.js'
+
+describe('selectAllModifier', () => {
+  test('uses Cmd on macOS and Ctrl elsewhere', () => {
+    expect(selectAllModifier('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/130')).toBe('meta')
+    expect(selectAllModifier('Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130')).toBe('ctrl')
+    expect(selectAllModifier('Mozilla/5.0 (X11; Linux x86_64) Chrome/130')).toBe('ctrl')
+  })
+})
 
 describe('modifierBitmask', () => {
   test('maps to CDP bits: alt=1 ctrl=2 meta=4 shift=8', () => {
