@@ -18,6 +18,9 @@
 - Register service-worker event listeners synchronously in `packages/extension/entrypoints/background.ts`. Preserve URL-change, tab-removal, and debugger-detach cleanup of refs and collectors.
 - Browser access checks live in `packages/extension/tools/access.ts`, not the CDP transport. Check managed-tab membership and domain allowlist **before** debugger access; omitted `tabId` selects a managed tab, never the user's arbitrary active tab.
 - Refs encode worker era and snapshot version. Preserve explicit `STALE_REF`/`NO_SNAPSHOT` failures across restarts and invalidation; same-worker recovery must identify the element rather than reuse its numeric ref blindly (`tools/ref-recovery.ts`).
+- Input tools must not re-dispatch a click or key when the outcome is uncertain: a second click on a button that keeps its dialog open (e.g. "add row") duplicates the side effect. Report the observed state instead (`click` returns `dialogStillOpen`), and verify edits by reading back (`type` returns the field `value`).
+- CDP key events on macOS: Ctrl+A moves the caret to line start, and synthetic shortcuts do not trigger editing commands by themselves. Select-all needs the Meta modifier plus `commands: ['selectAll']` on `Input.dispatchKeyEvent` (`dispatchKey` in `lib/cdp-commands.ts`, `selectAllModifier` in `lib/keymap.ts`).
+- Tool-result wording lives in the server `defs-*.ts` `run()` functions, not in the extension; `evaluate_script` output must stay `JSON.parse`-able (strings are JSON-quoted, truncation goes on a separate `[TRUNCATED]` line).
 
 ## Local runtime gotchas
 
@@ -27,6 +30,9 @@
 - The npm package is `@chrome-in-harness/launcher`, while its bin is `chrome-in-harness`: use `npx @chrome-in-harness/launcher start`. Keep CLI execution in `packages/launcher/src/bin.ts`; importing `cli.ts` must not start it.
 - Self-service dev loop (no user clicks): `npm run build:extension` **then** call the `reload_extension` tool (development installs only; build first or it reloads the old bundle). For server/tool-schema changes, rebuild the server and kill the process on port 12306 (a launchd agent, `~/Library/LaunchAgents/com.chrome-in-harness.server.plist`, respawns it from `packages/server/dist`), then refresh OpenCode's cached tool list without restarting the session: `opencode api post '/api/experimental/mcp/chrome-in-harness/disconnect?location[directory]=<repo>'` followed by the same `.../connect` call.
 - Extension reloads invalidate old refs; take a new snapshot. Opening DevTools on a controlled tab can displace the extension debugger (`DEBUGGER_BUSY`).
+- The extension service worker's console is not readable through the tools. To trace extension-side decisions during a live check, temporarily log into the page with `evaluateJson(tabId, 'console.log(...)')` and read it with `read_console`; remove the logging afterwards.
+- Live checks against a local page: serve it from the session temp dir with `python3 -m http.server <port> --bind 127.0.0.1` as a **background** shell job (a trailing `&` in a foreground command does not survive), add `127.0.0.1` to the allowlist if prompted, and include `<meta charset="utf-8">` or CJK text shows up as mojibake in snapshots.
+- `npm run lint` currently reports only `no-console` warnings (0 errors); warnings do not fail CI.
 - Keep WS extension-Origin checks, MCP loopback/DNS-rebinding checks, and extension access gates intact. `CIC_EXTENSION_ID` optionally pins the permitted extension. Permission/privacy context is in `docs/CWS_DISCLOSURE.md` and `docs/PRIVACY.md`.
 
 ## Packaging
