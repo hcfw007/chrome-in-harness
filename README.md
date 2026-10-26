@@ -15,7 +15,7 @@ Claude-in-Chrome 风格的开源浏览器 MCP：通过 Chrome 扩展，让支持
 
 ## 功能概览
 
-- **看页面**：读取可访问性树快照、元素文本和截图（像素与 CSS 坐标一致），使用带版本的 ref 定位元素；`probe` / `get_html` 只读探查单个元素的状态与 outerHTML。
+- **看页面**：读取可访问性树快照、元素文本和截图（回报图片与 CSS 像素的实际比例，可按截图坐标点击），使用带版本的 ref 定位元素；`probe` / `get_html` 只读探查单个元素的状态与 outerHTML。
 - **操作页面**：导航、刷新（可绕过缓存）、点击、悬停、滚动或滚动到指定元素、文本输入和快捷键；iframe / Canvas 等无法通过 ref 命中的目标可用坐标点击，并回报落点元素。
 - **编辑代码**：支持保留多行缩进的输入，以及通过页面暴露的 Monaco API 全量写入编辑器；包含键盘通路检测和编辑器塌缩恢复。
 - **管理标签页**：创建、切换、关闭标签页，或显式接管已有标签页；操作限定在 "Chrome in Harness" 受管组内。
@@ -80,7 +80,7 @@ Chrome 扩展 · MV3 service worker / WXT
 - **reload_extension**：仅开发态——从磁盘重新加载解压扩展（等同 `chrome://extensions` 点 ↻）并等待重连，代理可自行「构建 → 重载 → 验证」扩展代码；商店安装版本直接拒绝。不刷新工具 schema：改了工具参数还需重启 server 并让客户端重新拉取工具列表（见下文「MCP 升级后」）
 - **scroll_to**：按 ref / CSS selector / 可见文本（三选一）把元素滚到视口中央，回执滚动后的视口 rect 与 `inViewport`
 - **reload**：重新加载当前页并按 navigate 同款策略等待；`hard:true` 绕过 HTTP 缓存（验证部署，免去加随机 query 污染路由）；旧 ref 全部失效
-- **screenshot**：按 1/dpr 缩放输出，图片像素 = 视口 CSS 像素，量到的坐标可直接给 `click_at`；附带 `width/height/dpr` 文本。缩放不可用时返回原图，文本会提示把坐标除以 dpr
+- **screenshot**：按标准档图片规则缩放（长边 ≤ 1568、视觉 token ≤ 1568），宿主不会再二次缩放；文本回报视口尺寸、dpr、图片尺寸与「1 图片像素 = N CSS 像素」。在图上量到的坐标用 `click_at({space: "image"})` 传入，由扩展换算
 - **add_allowlist_domain**：显式扩白名单（无确认窗口，直接生效）。一般无需手动调用——访问新域名会自动弹确认窗口
 - **evaluate_script**：受限 `Runtime.evaluate` 执行页面上下文 JS。脚本可以改页面（DOM 写入、`element.click()` 均允许），黑名单只拒绝网络访问（fetch/XHR/WebSocket/sendBeacon）、eval/Function、导航（location/window.open）、document.write、debugger 与 `chrome.*`；可用 `!`/`~`/`+`/`-` 开头的表达式；`awaitPromise:true` 需 async IIFE；结果文本就是 JSON 值（字符串带引号），可直接 `JSON.parse`，超限截断时另起一行标 `[TRUNCATED]`；以用户手势执行，脚本内 `element.click()` 触发的页面 `window.open` 不会被弹窗拦截
 - **request_permission**：针对域名发起 `chrome.permissions.request` 原生授权弹窗，授予后同步写入 storage 白名单。仅当用户明确要求时调用
@@ -91,7 +91,7 @@ Chrome 扩展 · MV3 service worker / WXT
 - **快照降噪**：不输出 `InlineTextBox`、与父节点同名的 `StaticText`、图标字体字形；自定义可点控件（cursor:pointer / onclick 的 div/li/span）标 `[weak]` 并给 ref，但包着真实控件（如 antd 下拉外的两层 div）的无名包装层不给。`limit` 是**输出字符预算**（默认 60000）而非节点数；预算不够时先隐藏纯文本子树保住 ref，末尾提示说明丢了什么并给出建议的重试 `limit`
 - **ref 生命周期**：ref 绑定 tab 的最近一次快照，格式 `e<N>-<token>`（token 编码 worker 代 + 快照版本）；导航/关 tab/debugger 分离即失效；跨 worker 代或过期一律显式 `STALE_REF`（拒绝静默错点）；同代快照更替时交互工具按元素身份自动重试一次；SW 被杀后报 `NO_SNAPSHOT` 引导重新 snapshot
 - **click snapshot**：`click({ref, snapshot: true})` 点击后等两帧渲染（后台 tab 上限 300ms）再返回新快照，适合点击即重渲染、旧 ref 全部失效的页面，省一次 `snapshot` 往返；异步取数后才渲染的内容仍应先 `wait`。点击已生效但取快照失败时只提示失败、不报错，避免误重点。点击只派发一次、从不自动重试；点击前后都有打开的对话框时结果标注 `dialog is still open`
-- **click_at**：ref 命中不了时（iframe/Canvas/icon-only 容器）的坐标点击兜底，视口 CSS 像素，越界显式报错；点击前 hit-test，回执落点元素与最近可交互祖先（可区分坐标偏移 / 被遮挡 / handler 无反应）
+- **click_at**：ref 命中不了时（iframe/Canvas/icon-only 容器）的坐标点击兜底，默认视口 CSS 像素；`space: "image"` 时按该 tab 最近一次截图换算，截图后视口变过或坐标超出图片会显式报错；越界显式报错；点击前 hit-test，回执落点元素与最近可交互祖先（可区分坐标偏移 / 被遮挡 / handler 无反应）
 - **press_key**：单键/组合键（`ctrl`/`alt`/`shift`/`meta` + 键名，支持 F1-F24），可选先 focus 指定 ref；派发前有默认动作探针——临时离屏输入框验证按键真的产生字符插入（监听器探针检测不出「事件送达但默认动作被丢弃」的假活，resize/失焦后的典型死法），死了自动重开焦点仿真/激活自愈，仍死显式报 `KEY_PIPELINE_DEAD`
 - **get_text**：优先读 AX value（虚拟滚动编辑器全文唯一可靠读数），innerText 兜底，上限 8KB
 - **type**：`mode="insert"`（默认）/ `mode="verbatim"`（Monaco 类编辑器逐行 insertText 还原缩进，无 trim）/ `mode="set"`（monaco `setValue` 原子写整个缓冲——绕开键盘/焦点/IME 通路，窗口失焦、键路死亡、编辑器塌缩都不影响；ref 可省，单编辑器页面自动选中）；焦点不在可编辑元素时显式报 `INPUT_NOT_LANDED` 而非静默假成功；`clear:true` 用全选（macOS Cmd+A，其余 Ctrl+A）+ Delete 清空，清不掉时报错而不追加；返回插入点概要 `{line, col}` 和输入后的实际值供模型自查

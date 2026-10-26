@@ -16,7 +16,7 @@ that powers:
 - `probe` / `get_html` — read-only inspection of one element: existence, visibility, position,
   text, a fixed allowlist of attributes, or its outerHTML (truncated to a bounded size)
 - `screenshot` — capturing the viewport (`Page.captureScreenshot`), downscaled locally to
-  CSS pixels
+  at most 1568 px on the long edge
 - `navigate` / `reload` — loading a URL or reloading the current page (`Page.navigate`,
   `Page.reload`, optionally bypassing the HTTP cache)
 - `read_console` / `read_network` / `wait_for_response` — capturing console output and network

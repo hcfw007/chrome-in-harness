@@ -129,6 +129,8 @@ const clickAt = defineTool({
     'Click at raw viewport coordinates (CSS pixels). Escape hatch for targets a ref cannot reach: ' +
     'elements inside iframes/Canvas, and icon-only containers with no accessible name (e.g. a "..." menu). ' +
     'Requires coordinates:true to signal intent. ' +
+    'space:"image" means x/y were measured on this tab\'s latest screenshot; the tool converts them to CSS pixels ' +
+    'and fails if the viewport changed since that screenshot (take a new one). ' +
     'Options: button "left"|"right"|"middle" (right-click opens context menus), clickCount 2 for double-click, ' +
     'modifiers ["ctrl"|"alt"|"shift"|"meta"] for chords. ' +
     'Out-of-viewport coordinates fail with an explicit error (viewport metrics are re-measured per call). ' +
@@ -142,7 +144,11 @@ const clickAt = defineTool({
     const result = await callBridge(call, 'click_at', args, clickAtResult)
     const detail = args.button && args.button !== 'left' ? ` ${args.button}` : ''
     const count = args.clickCount && args.clickCount > 1 ? ` x${args.clickCount}` : ''
-    return toolText(`Clicked${detail}${count} at (${args.x}, ${args.y})${formatHit(result.hit)}`)
+    const where =
+      result.css !== undefined
+        ? `image (${args.x}, ${args.y}) → CSS (${result.css.x}, ${result.css.y})`
+        : `(${args.x}, ${args.y})`
+    return toolText(`Clicked${detail}${count} at ${where}${formatHit(result.hit)}`)
   },
 })
 
@@ -268,23 +274,44 @@ const screenshot = defineTool({
   name: 'screenshot',
   title: 'Capture a screenshot',
   description:
-    'Capture a PNG screenshot of the visible viewport. The image is scaled so 1 image pixel = 1 CSS pixel, ' +
-    'so coordinates measured on it can be passed to click_at directly; the text part reports width/height/dpr.',
+    'Capture a PNG screenshot of the visible viewport. Wide viewports are downscaled (long edge <= 1568 px) so the ' +
+    'host never resizes the image again; the text part reports the image size and its ratio to CSS pixels. ' +
+    'To click a point measured on the image, pass it to click_at with space:"image" — the tool converts it to CSS ' +
+    'pixels using this tab\'s latest screenshot.',
   schema: screenshotParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'screenshot', args, screenshotResult)
     const image = toolImage(result.data, result.mimeType)
     if (result.width === undefined || result.height === undefined) return image
-    return [...image, ...toolText(describeScreenshotPixels(result.width, result.height, result.dpr ?? 1, result.scale ?? 1))]
+    return [...image, ...toolText(describeScreenshotPixels(result))]
   },
 })
 
+/** 保留两位小数，比例只给人读。 */
+function ratio(value: number): string {
+  return String(Math.round(value * 100) / 100)
+}
+
 /**
- * 截图像素与 click_at 坐标的换算说明。缩放失败时扩展回传原图（scale=1、dpr>1）：
- * 此时图片是设备像素，必须如实告知除以 dpr，否则模型量到的坐标会差 dpr 倍。
+ * 截图像素与 click_at 坐标的换算说明。新扩展回传 imageWidth/cssScale，直接如实报比例；
+ * 旧扩展只有 scale（图片/设备像素），按旧规则推断。
  */
-export function describeScreenshotPixels(width: number, height: number, dpr: number, scale: number): string {
+export function describeScreenshotPixels(result: z.infer<typeof screenshotResult>): string {
+  const width = result.width ?? 0
+  const height = result.height ?? 0
+  const dpr = result.dpr ?? 1
   const viewport = `Viewport ${width}x${height} CSS px, dpr ${dpr}`
+  if (result.imageWidth !== undefined && result.imageHeight !== undefined && result.cssScale !== undefined) {
+    const image = `image ${result.imageWidth}x${result.imageHeight}`
+    if (Math.abs(result.cssScale - 1) < 0.005) {
+      return `${viewport}; ${image} — image px = CSS px, use these coordinates with click_at directly.`
+    }
+    return (
+      `${viewport}; ${image} — 1 image px = ${ratio(1 / result.cssScale)} CSS px. ` +
+      'Pass coordinates measured on this image to click_at with space:"image".'
+    )
+  }
+  const scale = result.scale ?? 1
   if (scale !== 1) return `${viewport}; image px = CSS px (downscaled from dpr ${dpr}) — use these coordinates with click_at.`
   if (dpr === 1) return `${viewport}; image px = CSS px — use these coordinates with click_at.`
   return (

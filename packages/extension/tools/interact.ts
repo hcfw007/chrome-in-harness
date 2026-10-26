@@ -26,6 +26,7 @@ import {buildHitTestScript, parseHitTestResult} from '../lib/hit-test'
 import type {HitInfo} from '../lib/hit-test'
 import {resolveKey, selectAllModifier} from '../lib/keymap'
 import type {InputModifier} from '../lib/keymap'
+import {imagePointToCss, lastScreenshot} from '../lib/screenshot-geometry'
 import {buildScrollToScript, CENTER_AND_DESCRIBE, parseScrollToReceipt} from '../lib/scroll-locate'
 import {planVerbatim} from '../lib/verbatim'
 import {authorizeTab} from './access'
@@ -107,13 +108,15 @@ export const click: ToolHandler = async (params) => {
 
 /**
  * 坐标点击（ref 命中不了时的兜底：iframe / Canvas / 无 ref 的 icon-only 容器）。
- * 坐标是视口 CSS 像素；直接走 CDP Input.*，不做元素解析。
+ * 坐标默认是视口 CSS 像素；space="image" 时按本 tab 最近一次截图的比例换算成 CSS 像素，
+ * 截图后视口变过则拒绝（旧比例不再成立）。直接走 CDP Input.*，不做元素解析。
  * button 支持左/中/右键，clickCount 支持双击，modifiers 支持组合键。
- * 越界坐标显式报错（现采视口度量，无任何跨调用缓存）——静默落点是第二轮战报的教训。
+ * 越界坐标显式报错（现采视口度量）——静默落点是第二轮战报的教训。
  */
 export const clickAt: ToolHandler = async (params) => {
   // run_actions 步骤绕过 server 校验：x/y 会拼进 hit-test 页面脚本，必须按 schema 校验而非 cast
-  const {x, y, tabId, button, clickCount, modifiers} = parseToolParams('click_at', clickAtParams, params)
+  const parsed = parseToolParams('click_at', clickAtParams, params)
+  const {tabId, button, clickCount, modifiers, space} = parsed
   const target = await prepareInputTab(tabId)
   const metrics = await getViewportMetrics(target.tabId)
   if (metrics.width <= 0 || metrics.height <= 0) {
@@ -121,6 +124,14 @@ export const clickAt: ToolHandler = async (params) => {
       'WINDOW_NOT_INTERACTIVE: the viewport reads 0x0 (window minimized or tab hidden), ' +
         'input would be silently dropped. Restore the window and retry.',
     )
+  }
+  let {x, y} = parsed
+  if (space === 'image') {
+    const viewport = {width: Math.round(metrics.width), height: Math.round(metrics.height)}
+    const converted = imagePointToCss(lastScreenshot(target.tabId), viewport, x, y)
+    if (!converted.ok) throw new Error(`click_at space="image": ${converted.reason}`)
+    x = converted.x
+    y = converted.y
   }
   if (x < 0 || y < 0 || x > metrics.width || y > metrics.height) {
     throw new Error(
@@ -141,7 +152,10 @@ export const clickAt: ToolHandler = async (params) => {
     hit = undefined
   }
   await dispatchClick(target.tabId, x, y, options)
-  return hit === undefined ? {} : {hit}
+  return {
+    ...(hit === undefined ? {} : {hit}),
+    ...(space === 'image' ? {css: {x, y}} : {}),
+  }
 }
 
 export const hover: ToolHandler = async (params) => {

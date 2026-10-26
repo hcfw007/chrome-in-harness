@@ -82,13 +82,15 @@ export const clickParams = z.object({
 
 /**
  * 坐标点击：ref 无法命中时（iframe/Canvas/无 ref 的 icon-only 容器等）的兜底。
- * 坐标是视口 CSS 像素；必须显式传 `coordinates: true` 作为意图标记。
+ * 坐标默认是视口 CSS 像素；space='image' 时是本 tab 最近一次截图上的像素，由扩展换算。
+ * 必须显式传 `coordinates: true` 作为意图标记。
  * button 支持左/中/右键；clickCount 支持双击/三击；modifiers 支持组合键。
  */
 export const clickAtParams = z.object({
   x: z.number().finite(),
   y: z.number().finite(),
   coordinates: z.literal(true),
+  space: z.enum(['css', 'image']).optional(),
   button: z.enum(['left', 'right', 'middle']).optional(),
   clickCount: z.number().int().min(1).max(3).optional(),
   modifiers: inputModifiersSchema.optional(),
@@ -445,6 +447,8 @@ export const hitInfoSchema = z.object({
 
 export const clickAtResult = z.object({
   hit: hitInfoSchema.nullable().optional(),
+  /** space='image' 时实际点击的视口 CSS 坐标。 */
+  css: z.object({x: z.number(), y: z.number()}).optional(),
 })
 
 /**
@@ -464,8 +468,13 @@ export const screenshotResult = z.object({
   width: z.number().optional(),
   height: z.number().optional(),
   dpr: z.number().optional(),
-  /** 图片像素 / 设备像素的缩放比：1/dpr 时图片像素 == CSS 像素。 */
+  /** 图片像素 / 设备像素的缩放比（旧字段，保留兼容）。 */
   scale: z.number().optional(),
+  /** 回传图片的实际像素尺寸。 */
+  imageWidth: z.number().int().positive().optional(),
+  imageHeight: z.number().int().positive().optional(),
+  /** 图片像素 / CSS 像素：1 = 图片坐标即 CSS 坐标；< 1 = 图片被缩小过。 */
+  cssScale: z.number().positive().optional(),
 })
 
 export interface TabSummary {

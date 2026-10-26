@@ -5,6 +5,7 @@ import {connect} from '../lib/connection'
 import {consoleBuffer} from '../lib/console-buffer'
 import {networkBuffer} from '../lib/network-buffer'
 import {refStore} from '../lib/ref-store'
+import {forgetScreenshot} from '../lib/screenshot-geometry'
 import {forgetVersionFloor} from '../lib/snapshot-version'
 
 const KEEPALIVE_ALARM = 'keepalive'
@@ -33,6 +34,7 @@ export default defineBackground(() => {
     consoleBuffer.clear(tabId)
     networkBuffer.clear(tabId)
     dropCollectors(tabId)
+    forgetScreenshot(tabId)
   })
 
   // 页面 URL 变化（硬导航与 pushState）→ 该 tab 的 ref 全部失效
@@ -47,6 +49,7 @@ export default defineBackground(() => {
     networkBuffer.clear(tabId)
     dropCollectors(tabId)
     forgetVersionFloor(tabId)
+    forgetScreenshot(tabId)
   })
 
   console.log('[background] Chrome in Harness service worker started')

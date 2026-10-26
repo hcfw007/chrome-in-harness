@@ -311,6 +311,36 @@ describe('browser defs', () => {
     )
   })
 
+  test('screenshot reports the real image-to-CSS ratio for a downscaled wide viewport', async () => {
+    const fake = fakeBridge({
+      data: 'aGVsbG8=', mimeType: 'image/png', width: 2560, height: 1267, dpr: 1, scale: 0.6125,
+      imageWidth: 1568, imageHeight: 776, cssScale: 0.6125,
+    })
+    const content = await run(byName('screenshot'), {}, fake.call)
+    expect((content[1] as {text: string}).text).toBe(
+      'Viewport 2560x1267 CSS px, dpr 1; image 1568x776 — 1 image px = 1.63 CSS px. ' +
+        'Pass coordinates measured on this image to click_at with space:"image".',
+    )
+  })
+
+  test('screenshot says no conversion is needed when the image matches CSS pixels', async () => {
+    const fake = fakeBridge({
+      data: 'aGVsbG8=', mimeType: 'image/png', width: 1280, height: 720, dpr: 2, scale: 0.5,
+      imageWidth: 1280, imageHeight: 720, cssScale: 1,
+    })
+    const content = await run(byName('screenshot'), {}, fake.call)
+    expect((content[1] as {text: string}).text).toBe(
+      'Viewport 1280x720 CSS px, dpr 2; image 1280x720 — image px = CSS px, use these coordinates with click_at directly.',
+    )
+  })
+
+  test('click_at with space:"image" reports the converted CSS point', async () => {
+    const fake = fakeBridge({css: {x: 270, y: 174}})
+    const content = await run(byName('click_at'), {x: 165.4, y: 106.6, coordinates: true, space: 'image'}, fake.call)
+    expect(fake.received[0]?.params).toMatchObject({space: 'image'})
+    expect((content[0] as {text: string}).text).toBe('Clicked at image (165.4, 106.6) → CSS (270, 174)')
+  })
+
   test('screenshot appends viewport metrics when the extension reports them', async () => {
     const fake = fakeBridge({data: 'aGVsbG8=', mimeType: 'image/png', width: 1280, height: 720, dpr: 2, scale: 0.5})
     const content = await run(byName('screenshot'), {}, fake.call)
