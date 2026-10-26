@@ -19,9 +19,9 @@ export interface ScriptRejection {
 
 export type ScriptGuardResult = ScriptVerdict | ScriptRejection
 
-/** 允许的顶层语法形态：IIFE / 表达式 / 块（await 必需时包 IIFE）。 */
+/** 允许的顶层语法形态：IIFE / 表达式（含 ! ~ + - 一元运算开头）/ 块（await 必需时包 IIFE）。 */
 const TOP_LEVEL_PATTERN =
-  /^\s*(?:\(?(?:async\s*)?\(\)\s*=>|\(async\s*\(\)\s*=>|\(|[\w$.[\]'"`]|\{)/
+  /^\s*(?:\(?(?:async\s*)?\(\)\s*=>|\(async\s*\(\)\s*=>|\(|[\w$.[\]'"`!~+-]|\{)/
 
 /** 危险标识：一旦出现即拒绝。黑名单靠子串匹配（不区分大小写）。 */
 const FORBIDDEN_PATTERNS: readonly {pattern: RegExp; reason: string}[] = [

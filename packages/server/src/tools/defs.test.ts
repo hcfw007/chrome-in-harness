@@ -511,10 +511,25 @@ describe('tab defs', () => {
 })
 
 describe('evaluate defs', () => {
-  test('evaluate_script renders value and type, flags truncation', async () => {
+  test('evaluate_script returns the bare JSON value and flags truncation on its own line', async () => {
     const fake = fakeBridge({value: '{"a":1}', type: 'object', truncated: true})
     const content = await run(byName('evaluate_script'), {expression: '({a: 1})'}, fake.call)
-    expect(content).toEqual([{type: 'text', text: '<object> {"a":1} (TRUNCATED)'}])
+    expect(content).toEqual([{type: 'text', text: '{"a":1}\n[TRUNCATED]'}])
+  })
+
+  test('evaluate_script output parses as JSON for strings, numbers and booleans', async () => {
+    const cases: Array<[unknown, string, unknown]> = [
+      ['he said "hi"', 'string', 'he said "hi"'],
+      ['42', 'number', 42],
+      ['true', 'boolean', true],
+      ['[1,2]', 'object', [1, 2]],
+      ['null', 'object', null],
+    ]
+    for (const [value, type, parsed] of cases) {
+      const fake = fakeBridge({value, type, truncated: false})
+      const content = await run(byName('evaluate_script'), {expression: 'x'}, fake.call)
+      expect(JSON.parse((content[0] as {text: string}).text)).toEqual(parsed)
+    }
   })
 
   test('evaluate_script forwards awaitPromise and tabId', async () => {
