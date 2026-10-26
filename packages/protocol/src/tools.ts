@@ -97,9 +97,37 @@ export const clickAtParams = z.object({
   ...tabIdField,
 })
 
-export const hoverParams = z.object({
-  ref: z.string().regex(REF_PATTERN),
+/**
+ * hover：ref / selector / text / 坐标（x+y，视口 CSS 像素）四选一。
+ * 无 ref 的纯图标元素（tooltip 触发器）用 selector 或坐标即可悬停。
+ * shape 不带 refine（给 server 注册 inputSchema），hoverParams 带 refine（extension 校验）。
+ */
+export const hoverParamsShape = {
+  ref: z.string().regex(REF_PATTERN).optional(),
+  selector: z.string().min(1).max(500).optional(),
+  text: z.string().min(1).max(200).optional(),
+  x: z.number().finite().optional(),
+  y: z.number().finite().optional(),
   ...tabIdField,
+}
+
+export function hoverParamsError(p: {ref?: unknown; selector?: unknown; text?: unknown; x?: unknown; y?: unknown}): string | undefined {
+  if ((p.x === undefined) !== (p.y === undefined)) return 'pass x and y together'
+  const count = [p.ref, p.selector, p.text, p.x].filter((v) => v !== undefined).length
+  return count === 1 ? undefined : `pass exactly one of ref / selector / text / x+y (got ${count})`
+}
+
+export const hoverParams = z.object(hoverParamsShape).superRefine((p, ctx) => {
+  const message = hoverParamsError(p)
+  if (message !== undefined) ctx.addIssue({code: 'custom', message})
+})
+
+/** 实际悬停的视口 CSS 坐标与该点元素（坐标模式没有元素描述）。 */
+export const hoverResult = z.object({
+  x: z.number().optional(),
+  y: z.number().optional(),
+  tag: z.string().optional(),
+  text: z.string().optional(),
 })
 
 export const pressKeyParams = z.object({
@@ -517,6 +545,27 @@ export const pingResult = z.object({
   startedAt: z.number().optional(),
 })
 
+/**
+ * select_option：按可见文本选下拉项。ref 指向触发器（原生 <select>，或自定义下拉的选择框）。
+ * search=true 时点开后先把 text 输入搜索框过滤（虚拟列表里未渲染的项靠它找到）。
+ */
+export const selectOptionParams = z.object({
+  ref: z.string().regex(REF_PATTERN),
+  text: z.string().min(1).max(200),
+  search: z.boolean().optional(),
+  timeoutMs: z.number().int().positive().max(10_000).optional(),
+  ...tabIdField,
+})
+
+export const selectOptionResult = z.object({
+  /** native = 原生 <select>；custom = 自定义下拉（点击了选项）。 */
+  kind: z.enum(['native', 'custom']),
+  /** 实际选中的选项文本。 */
+  selected: z.string(),
+  /** 选完后触发器显示的值（自定义下拉重渲染时可能读不回）。 */
+  value: z.string().optional(),
+})
+
 /** 全部工具名，extension 注册与 server 注册共用，防两端名字漂移。 */
 export const TOOL_NAMES = [
   'ping',
@@ -549,6 +598,7 @@ export const TOOL_NAMES = [
   'probe',
   'get_html',
   'wait_for_response',
+  'select_option',
 ] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]

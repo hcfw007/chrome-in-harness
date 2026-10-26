@@ -16,7 +16,7 @@ Claude-in-Chrome 风格的开源浏览器 MCP：通过 Chrome 扩展，让支持
 ## 功能概览
 
 - **看页面**：读取可访问性树快照、元素文本和截图（回报图片与 CSS 像素的实际比例，可按截图坐标点击），使用带版本的 ref 定位元素；`probe` / `get_html` 只读探查单个元素的状态与 outerHTML。
-- **操作页面**：导航、刷新（可绕过缓存）、点击、悬停、滚动或滚动到指定元素、文本输入和快捷键；iframe / Canvas 等无法通过 ref 命中的目标可用坐标点击，并回报落点元素。
+- **操作页面**：导航、刷新（可绕过缓存）、点击、悬停（ref / CSS 选择器 / 文本 / 坐标）、下拉选择、滚动或滚动到指定元素、文本输入和快捷键；iframe / Canvas 等无法通过 ref 命中的目标可用坐标点击，并回报落点元素。
 - **编辑代码**：支持保留多行缩进的输入，以及通过页面暴露的 Monaco API 全量写入编辑器；包含键盘通路检测和编辑器塌缩恢复。
 - **管理标签页**：创建、切换、关闭标签页，或显式接管已有标签页；操作限定在 "Chrome in Harness" 受管组内。
 - **标签页会话**：`ensure_tab` 提供可复用的标签句柄——每个 agent 固定用自己的标签，标签被关自动补建，避免标签越开越多。
@@ -71,7 +71,7 @@ Chrome 扩展 · MV3 service worker / WXT
 
 ## 工具与行为细节
 
-**工具集**（30 个）：`ping`、`reload_extension`、`navigate`、`reload`、`snapshot`、`click`、`click_at`、`hover`、`type`、`press_key`、`get_text`、`probe`、`get_html`、`wait_for_response`、`scroll`、`scroll_to`、`screenshot`、`tab_list`、`tab_new`、`ensure_tab`、`tab_select`、`tab_close`、`takeover_tab`、`run_actions`、`read_console`、`read_network`、`wait`、`add_allowlist_domain`、`evaluate_script`、`request_permission`。
+**工具集**（31 个）：`ping`、`reload_extension`、`navigate`、`reload`、`snapshot`、`click`、`click_at`、`hover`、`type`、`press_key`、`get_text`、`probe`、`get_html`、`select_option`、`wait_for_response`、`scroll`、`scroll_to`、`screenshot`、`tab_list`、`tab_new`、`ensure_tab`、`tab_select`、`tab_close`、`takeover_tab`、`run_actions`、`read_console`、`read_network`、`wait`、`add_allowlist_domain`、`evaluate_script`、`request_permission`。
 
 - **read_console / read_network**：CDP 采集的 console 与网络请求元数据（含耗时与细分失败原因；响应体与请求头不采集，`data:` URL 不记录）。缓冲从 tab 首次被工具 attach 起积累
 - **wait_for_response**：等 URL 含指定子串（可加 status / method）的请求完成，只看元数据；默认回看 2s，「先点击再等待」无竞态
@@ -94,6 +94,8 @@ Chrome 扩展 · MV3 service worker / WXT
 - **click_at**：ref 命中不了时（iframe/Canvas/icon-only 容器）的坐标点击兜底，默认视口 CSS 像素；`space: "image"` 时按该 tab 最近一次截图换算，截图后视口变过或坐标超出图片会显式报错；越界显式报错；点击前 hit-test，回执落点元素与最近可交互祖先（可区分坐标偏移 / 被遮挡 / handler 无反应）
 - **press_key**：单键/组合键（`ctrl`/`alt`/`shift`/`meta` + 键名，支持 F1-F24），可选先 focus 指定 ref；派发前有默认动作探针——临时离屏输入框验证按键真的产生字符插入（监听器探针检测不出「事件送达但默认动作被丢弃」的假活，resize/失焦后的典型死法），死了自动重开焦点仿真/激活自愈，仍死显式报 `KEY_PIPELINE_DEAD`
 - **get_text**：优先读 AX value（虚拟滚动编辑器全文唯一可靠读数），innerText 兜底，上限 8KB
+- **select_option**：按可见文本选择下拉项，`ref` 指向原生 `<select>` 或自定义下拉（antd / Element / ARIA combobox）的选择框。原生 select 直接设值；自定义下拉点开后用真实鼠标点一次匹配项，再回读选择框显示的值。精确匹配优先于包含匹配，禁用项拒绝；`search:true` 先在搜索框输入文本过滤，用于虚拟列表里未渲染的项；找不到时报错列出当前可见选项
+- **hover**：`ref` / `selector` / `text` / `x+y` 四选一，selector 适合 snapshot 里没有 ref 的纯图标元素（如 tooltip 触发器）
 - **type**：`mode="insert"`（默认）/ `mode="verbatim"`（Monaco 类编辑器逐行 insertText 还原缩进，无 trim）/ `mode="set"`（monaco `setValue` 原子写整个缓冲——绕开键盘/焦点/IME 通路，窗口失焦、键路死亡、编辑器塌缩都不影响；ref 可省，单编辑器页面自动选中）；焦点不在可编辑元素时显式报 `INPUT_NOT_LANDED` 而非静默假成功；`clear:true` 用全选（macOS Cmd+A，其余 Ctrl+A）+ Delete 清空，清不掉时报错而不追加；返回插入点概要 `{line, col}` 和输入后的实际值供模型自查
 - **wait editorRendered**：Monaco 渲染完成 = 高度 > 40px 且宽度 > 200px 且有非空 view-line——resize 后塌缩成 5×5 窄条的假就绪不再放过；检测到塌缩自动按父容器尺寸强制 `layout()` 重排救回（无参 layout 会按自身窄宽度自我维持，必须显式传维度）
 - **输入路径**：常规点击与输入通过 CDP `Input.*` 派发浏览器事件；`type mode="set"` 则直接调用 Monaco API，不模拟逐键输入。不保证网站将自动化操作视为人工操作

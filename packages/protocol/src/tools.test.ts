@@ -10,7 +10,10 @@ import {
   ensureTabResult,
   getTextParams,
   getTextResult,
+  hoverParams,
+  hoverParamsError,
   navigateParams,
+  selectOptionParams,
   pressKeyParams,
   readConsoleParams,
   readNetworkParams,
@@ -106,6 +109,24 @@ describe('params schemas', () => {
     expect(clickParams.safeParse({}).success).toBe(false)
     expect(clickParams.safeParse({ref: 'e1', snapshot: true}).success).toBe(true)
     expect(clickParams.safeParse({ref: 'e1', snapshot: 'yes'}).success).toBe(false)
+  })
+
+  test('hover takes exactly one of ref / selector / text / x+y', () => {
+    expect(hoverParams.safeParse({ref: 'e1'}).success).toBe(true)
+    expect(hoverParams.safeParse({selector: '[data-testid="lazy-badge"]'}).success).toBe(true)
+    expect(hoverParams.safeParse({text: '懒加载'}).success).toBe(true)
+    expect(hoverParams.safeParse({x: 10, y: 20}).success).toBe(true)
+    expect(hoverParams.safeParse({}).success).toBe(false)
+    expect(hoverParams.safeParse({ref: 'e1', selector: 'a'}).success).toBe(false)
+    expect(hoverParams.safeParse({x: 10}).success).toBe(false)
+    expect(hoverParamsError({x: 10})).toBe('pass x and y together')
+  })
+
+  test('select_option needs a ref and option text', () => {
+    expect(selectOptionParams.safeParse({ref: 'e3', text: '销售'}).success).toBe(true)
+    expect(selectOptionParams.safeParse({ref: 'e3', text: '销售', search: true, timeoutMs: 5000}).success).toBe(true)
+    expect(selectOptionParams.safeParse({text: '销售'}).success).toBe(false)
+    expect(selectOptionParams.safeParse({ref: 'e3', text: ''}).success).toBe(false)
   })
 
   test('click_at requires finite coords and the coordinates:true intent flag', () => {

@@ -7,7 +7,9 @@ import {
   countWaitConditions,
   getTextParams,
   getTextResult,
-  hoverParams,
+  hoverParamsError,
+  hoverParamsShape,
+  hoverResult,
   pressKeyParams,
   getHtmlParamsShape,
   getHtmlResult,
@@ -18,6 +20,8 @@ import {
   reloadResult,
   scrollToParamsShape,
   scrollToResult,
+  selectOptionParams,
+  selectOptionResult,
   waitParamsError,
   waitParamsShape,
   waitResult,
@@ -113,14 +117,29 @@ const click = defineTool({
 
 const hover = defineTool({
   name: 'hover',
-  title: 'Hover an element by ref',
-  description: 'Move the mouse over the element with the given ref.',
-  schema: hoverParams.shape,
+  title: 'Hover an element',
+  description:
+    'Move the mouse over an element, e.g. to open a tooltip or a hover menu. Pass exactly one of: ref (from snapshot), ' +
+    'selector (CSS, first match — works for icon-only elements that have no ref), text (first visible element whose ' +
+    'own text contains the substring), or x+y (viewport CSS pixels). selector/text scroll the element to the viewport ' +
+    'center first. Returns the point that was hovered.',
+  // 注册无 refine 的 shape（refine 会破坏 tools/list 的 JSON schema）；四选一在 run 里校验。
+  schema: hoverParamsShape,
   async run(args, call) {
-    await callBridge(call, 'hover', args, okResult)
-    return toolText(`Hovered ${args.ref}`)
+    const invalid = hoverParamsError(args)
+    if (invalid !== undefined) throw new Error(invalid)
+    const result = await callBridge(call, 'hover', args, hoverResult)
+    const target =
+      args.ref ?? (args.selector !== undefined ? JSON.stringify(args.selector) : args.text !== undefined ? `text ${JSON.stringify(args.text)}` : '')
+    const at = result.x !== undefined && result.y !== undefined ? ` at (${round1(result.x)}, ${round1(result.y)})` : ''
+    const label = result.tag !== undefined ? ` <${result.tag}>${result.text !== undefined ? ` "${result.text}"` : ''}` : ''
+    return toolText(`Hovered${target.length > 0 ? ` ${target}` : ''}${label}${at}`)
   },
 })
+
+function round1(value: number): number {
+  return Math.round(value * 10) / 10
+}
 
 const clickAt = defineTool({
   name: 'click_at',
@@ -434,6 +453,24 @@ const reload = defineTool({
   },
 })
 
+const selectOption = defineTool({
+  name: 'select_option',
+  title: 'Choose an option in a dropdown',
+  description:
+    'Choose a dropdown option by its visible text. ref is the select trigger from snapshot: a native <select>, or the ' +
+    'selector box of a custom dropdown (antd / Element / ARIA combobox). Native selects are set directly. Custom ' +
+    'dropdowns are opened (unless already open), the matching visible option is clicked once with a real mouse event, ' +
+    'and the trigger\'s displayed value is read back. Exact text matches win over substring matches; disabled options ' +
+    'are refused. search:true types text into the dropdown\'s search box first — use it for long or virtualized lists ' +
+    'whose target option is not rendered yet. On failure the error lists the options that were visible.',
+  schema: selectOptionParams.shape,
+  async run(args, call) {
+    const result = await callBridge(call, 'select_option', args, selectOptionResult)
+    const value = result.value !== undefined ? `; field now shows ${JSON.stringify(result.value)}` : ''
+    return toolText(`Selected ${JSON.stringify(result.selected)} in ${args.ref} (${result.kind} select)${value}`)
+  },
+})
+
 export const BROWSER_TOOL_DEFS: readonly ToolDef[] = [
   navigate,
   wait,
@@ -441,6 +478,7 @@ export const BROWSER_TOOL_DEFS: readonly ToolDef[] = [
   click,
   clickAt,
   hover,
+  selectOption,
   type,
   pressKey,
   getText,

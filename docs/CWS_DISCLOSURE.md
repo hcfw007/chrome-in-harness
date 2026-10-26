@@ -10,7 +10,7 @@ that powers:
 
 - `snapshot` — reading the accessibility tree (`Accessibility.getFullAXTree`) plus a
   read-only DOM pass that finds clickable custom controls (`DOM.getDocument`, `Runtime.evaluate`)
-- `click` / `click_at` / `hover` / `type` / `scroll` — dispatching trusted input events (`Input.*`);
+- `click` / `click_at` / `hover` / `type` / `scroll` / `select_option` — dispatching trusted input events (`Input.*`);
   `click_at` first reads which element sits under the point, read-only
 - `scroll_to` — scrolling one element into the center of the viewport
 - `probe` / `get_html` — read-only inspection of one element: existence, visibility, position,

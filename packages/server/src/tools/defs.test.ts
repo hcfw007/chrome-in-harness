@@ -334,6 +334,25 @@ describe('browser defs', () => {
     )
   })
 
+  test('hover by selector reports the element and point', async () => {
+    const fake = fakeBridge({x: 120, y: 40.25, tag: 'span'})
+    const content = await run(byName('hover'), {selector: '[data-testid="lazy"]'}, fake.call)
+    expect(fake.received[0]).toEqual({tool: 'hover', params: {selector: '[data-testid="lazy"]'}})
+    expect((content[0] as {text: string}).text).toBe('Hovered "[data-testid=\\"lazy\\"]" <span> at (120, 40.3)')
+  })
+
+  test('hover rejects ambiguous locators before reaching the extension', async () => {
+    const fake = fakeBridge({})
+    await expect(run(byName('hover'), {ref: 'e1', x: 1, y: 2}, fake.call)).rejects.toThrow('exactly one of')
+    expect(fake.received).toHaveLength(0)
+  })
+
+  test('select_option reports the chosen option and the field value', async () => {
+    const fake = fakeBridge({kind: 'custom', selected: '懒加载销售', value: '懒加载销售'})
+    const content = await run(byName('select_option'), {ref: 'e7', text: '懒加载销售'}, fake.call)
+    expect((content[0] as {text: string}).text).toBe('Selected "懒加载销售" in e7 (custom select); field now shows "懒加载销售"')
+  })
+
   test('click_at with space:"image" reports the converted CSS point', async () => {
     const fake = fakeBridge({css: {x: 270, y: 174}})
     const content = await run(byName('click_at'), {x: 165.4, y: 106.6, coordinates: true, space: 'image'}, fake.call)

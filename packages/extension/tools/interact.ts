@@ -1,5 +1,5 @@
 /** ref 交互工具：click / hover / type / press_key / scroll。ref 三态解析 + CDP 真实输入。 */
-import {clickAtParams, scrollToParams} from '@chrome-in-harness/protocol'
+import {clickAtParams, hoverParams, scrollToParams} from '@chrome-in-harness/protocol'
 import {ensureAttached} from '../lib/cdp'
 import {
   clearFocusedNativeValue,
@@ -158,14 +158,42 @@ export const clickAt: ToolHandler = async (params) => {
   }
 }
 
+/**
+ * 悬停：ref / selector / text / 坐标四选一。selector/text 复用 scroll_to 的页面内定位
+ * （滚到视口中央后取 rect 中心），无 ref 的纯图标 tooltip 触发器也能悬停。
+ */
 export const hover: ToolHandler = async (params) => {
-  const {ref, tabId} = params as {ref: string; tabId?: number}
-  const target = await prepareInputTab(tabId)
-  await withRef(target.tabId, ref, async (entry) => {
-    const {x, y} = await elementCenter(target.tabId, entry.backendDOMNodeId)
-    await dispatchHover(target.tabId, x, y)
-  })
-  return {}
+  const raw = parseToolParams('hover', hoverParams, params)
+  const target = await prepareInputTab(raw.tabId)
+  if (raw.ref !== undefined) {
+    const ref = raw.ref
+    return withRef(target.tabId, ref, async (entry) => {
+      const {x, y} = await elementCenter(target.tabId, entry.backendDOMNodeId)
+      await dispatchHover(target.tabId, x, y)
+      return {x, y}
+    })
+  }
+  if (raw.x !== undefined && raw.y !== undefined) {
+    const metrics = await getViewportMetrics(target.tabId)
+    if (raw.x < 0 || raw.y < 0 || raw.x > metrics.width || raw.y > metrics.height) {
+      throw new Error(`hover (${raw.x}, ${raw.y}) is outside the viewport (${metrics.width}x${metrics.height}); coordinates are viewport CSS pixels`)
+    }
+    await dispatchHover(target.tabId, raw.x, raw.y)
+    return {x: raw.x, y: raw.y}
+  }
+  const locator = raw.selector !== undefined ? {selector: raw.selector} : {text: raw.text ?? ''}
+  const receipt = parseScrollToReceipt(await evaluateJson<unknown>(target.tabId, buildScrollToScript(locator)))
+  if (receipt === null) {
+    const what = raw.selector !== undefined ? `selector ${JSON.stringify(raw.selector)}` : `text ${JSON.stringify(raw.text)}`
+    throw new Error(`hover: no visible element matches ${what}; wait for it to render or use probe to check it`)
+  }
+  if (!receipt.inViewport) {
+    throw new Error('hover: the element is clipped or has zero size after scrolling, so the pointer would miss it — use probe to inspect it')
+  }
+  const x = receipt.rect.x + receipt.rect.width / 2
+  const y = receipt.rect.y + receipt.rect.height / 2
+  await dispatchHover(target.tabId, x, y)
+  return {x, y, ...(receipt.tag !== undefined ? {tag: receipt.tag} : {}), ...(receipt.text !== undefined ? {text: receipt.text} : {})}
 }
 
 /**
