@@ -89,24 +89,25 @@ const click = defineTool({
   name: 'click',
   title: 'Click an element by ref',
   description:
-    'Click the element with the given ref from the latest snapshot. ' +
-    'When the click targets a button inside an open dialog and the dialog is still present afterwards, ' +
-    'the click is retried once via keyboard activation (focus + Enter) — dialog buttons sometimes move between measure and click. ' +
+    'Click the element with the given ref from the latest snapshot. The click is dispatched exactly once and never retried. ' +
+    'When a dialog was open before the click and is still open afterwards, the result says so — that is normal for ' +
+    'buttons that keep the dialog open (e.g. "add row"); snapshot to verify before clicking again. ' +
       'Pass snapshot: true to get a fresh full snapshot after the click (waits ~2 animation frames first); ' +
       'saves a round trip on pages that re-render and invalidate refs. For async content, use wait instead.',
   schema: clickParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'click', args, clickResult)
+    const head = `Clicked ${args.ref}${result.dialogStillOpen === true ? ' (a dialog is still open)' : ''}`
     if (result.snapshot !== undefined) {
       const s = result.snapshot
       return toolText(
-        `Clicked ${args.ref}\n\nSnapshot of ${s.url} (version ${s.version})${s.truncated ? ' — TRUNCATED' : ''}\n\n${s.snapshot}`,
+        `${head}\n\nSnapshot of ${s.url} (version ${s.version})${s.truncated ? ' — TRUNCATED' : ''}\n\n${s.snapshot}`,
       )
     }
     if (result.snapshotError !== undefined) {
-      return toolText(`Clicked ${args.ref} (snapshot failed: ${result.snapshotError}; call snapshot to continue)`)
+      return toolText(`${head} (snapshot failed: ${result.snapshotError}; call snapshot to continue)`)
     }
-    return toolText(`Clicked ${args.ref}`)
+    return toolText(head)
   },
 })
 

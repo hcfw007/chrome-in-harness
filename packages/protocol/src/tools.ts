@@ -445,8 +445,12 @@ export const clickAtResult = z.object({
   hit: hitInfoSchema.nullable().optional(),
 })
 
-/** snapshot 未请求时两字段均缺省；点击已生效但取快照失败时只带 snapshotError。 */
+/**
+ * snapshot 未请求时两字段均缺省；点击已生效但取快照失败时只带 snapshotError。
+ * dialogStillOpen：点击前后都有打开的对话框（点击只派发一次，不自动重试）。
+ */
 export const clickResult = z.object({
+  dialogStillOpen: z.boolean().optional(),
   snapshot: snapshotResult.optional(),
   snapshotError: z.string().optional(),
 })

@@ -159,6 +159,13 @@ describe('browser defs', () => {
     expect((content[0] as {text: string}).text).toBe('Clicked e3 (snapshot failed: detached; call snapshot to continue)')
   })
 
+  test('click reports a dialog that stayed open instead of retrying', async () => {
+    const fake = fakeBridge({dialogStillOpen: true})
+    const content = await run(byName('click'), {ref: 'e3'}, fake.call)
+    expect(fake.received).toHaveLength(1)
+    expect((content[0] as {text: string}).text).toBe('Clicked e3 (a dialog is still open)')
+  })
+
   test('click_at forwards coordinates and confirms', async () => {
     const fake = fakeBridge({})
     const content = await run(byName('click_at'), {x: 2466, y: 22, coordinates: true}, fake.call)

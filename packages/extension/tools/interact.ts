@@ -71,45 +71,35 @@ const RENDER_SETTLED =
   'new Promise(function(r){var t=setTimeout(function(){r(true)},300);' +
   'requestAnimationFrame(function(){requestAnimationFrame(function(){clearTimeout(t);r(true)})})})'
 
+/** 点击后等弹层关闭动画结束再判断对话框是否仍在。 */
+const DIALOG_SETTLE_MS = 150
+
 export const click: ToolHandler = async (params) => {
   const {ref, tabId, snapshot: wantSnapshot} = params as {ref: string; tabId?: number; snapshot?: boolean}
   const target = await prepareInputTab(tabId)
-  await withRef(target.tabId, ref, async (entry) => {
+  const dialogStillOpen = await withRef(target.tabId, ref, async (entry) => {
     const {x, y} = await locate(target.tabId, entry.backendDOMNodeId)
-    // 对话框守卫：弹窗项常因 React 重渲染在测量与点击之间挪位导致点击丢失。
-    // 点击前有对话框、静置后仍在 → 重测坐标补一击（文本节点 ref 无法 DOM.focus，
-    // 第二击是唯一通用补刀路径）；补击时元素已消失视为成功（弹层正在关闭）。
+    // 只点一次、绝不自动补击：弹窗里「添加一行」这类按钮点完弹窗本就保持打开，
+    // 补击会产生重复副作用。点击前后都有对话框时只回报给调用方，由其按快照判断。
     const dialogBefore = await evaluateJson<boolean>(target.tabId, HAS_OPEN_DIALOG)
     await dispatchClick(target.tabId, x, y)
-    if (dialogBefore) {
-      const stillOpen = async (): Promise<boolean> => {
-        // 弹层关闭有动画/异步延迟，立即检查会把已生效的点击误判为丢失
-        await new Promise((resolve) => setTimeout(resolve, 150))
-        return evaluateJson<boolean>(target.tabId, HAS_OPEN_DIALOG)
-      }
-      if (await stillOpen()) {
-        try {
-          const point = await locate(target.tabId, entry.backendDOMNodeId)
-          await dispatchClick(target.tabId, point.x, point.y)
-        } catch {
-          // 重测失败 = 元素正在消失，原始点击大概率已生效
-          return
-        }
-        if (await stillOpen()) {
-          throw new Error(
-            'click dispatched twice but the dialog is still open — snapshot to check its state and try a different target',
-          )
-        }
-      }
+    if (!dialogBefore) return false
+    // 弹层关闭有动画/异步延迟，立即检查会把已关闭的弹窗误报为仍打开
+    await new Promise((resolve) => setTimeout(resolve, DIALOG_SETTLE_MS))
+    try {
+      return await evaluateJson<boolean>(target.tabId, HAS_OPEN_DIALOG)
+    } catch {
+      return false
     }
   })
-  if (wantSnapshot !== true) return {}
+  const dialogField = dialogStillOpen ? {dialogStillOpen: true} : {}
+  if (wantSnapshot !== true) return dialogField
   // 点击已生效：快照失败不能让调用方误以为点击失败而重点
   try {
     await evaluateJson<boolean>(target.tabId, RENDER_SETTLED)
-    return {snapshot: await snapshot({tabId: target.tabId})}
+    return {...dialogField, snapshot: await snapshot({tabId: target.tabId})}
   } catch (error) {
-    return {snapshotError: error instanceof Error ? error.message : String(error)}
+    return {...dialogField, snapshotError: error instanceof Error ? error.message : String(error)}
   }
 }
 
