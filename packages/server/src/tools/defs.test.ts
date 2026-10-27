@@ -406,6 +406,12 @@ describe('browser defs', () => {
     expect(content).toEqual([{type: 'text', text: 'Typed into e2'}])
   })
 
+  test('type flags unverified landing inside a cross-origin iframe', async () => {
+    const fake = fakeBridge({mode: 'insert', insertedLines: 0, unverified: true})
+    const content = await run(byName('type'), {text: 'x', focus: 'none'}, fake.call)
+    expect((content[0] as {text: string}).text).toContain('Unverified: focus is inside a cross-origin iframe')
+  })
+
   test('type set mode reports the monaco setValue path', async () => {
     const fake = fakeBridge({mode: 'set', insertedLines: 7, insertionPoint: {line: 8, col: 1}})
     const content = await run(byName('type'), {text: 'code'}, fake.call)

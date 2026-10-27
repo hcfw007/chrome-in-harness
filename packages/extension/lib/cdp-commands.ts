@@ -473,7 +473,27 @@ export interface FocusState {
   readonly editable: boolean
   readonly monaco: boolean
   readonly insertionPoint: CursorPosition | null
+  /** 焦点停在跨域 iframe 上，内部焦点读不到：可编辑性无法验证（不等于没落盘）。 */
+  readonly crossOrigin: boolean
 }
+
+/**
+ * 页面脚本片段：沿焦点所在 iframe 逐层下钻到真正的焦点元素（JumpServer 的 xterm 等同源 iframe 编辑器）。
+ * 跨域 iframe 的 contentDocument 为 null（不抛错），与抛错同样视为不可验证。
+ * 返回 {el, win, crossOrigin}：win 为焦点元素所在 window，供 monaco / 原型 setter 取同一 realm。
+ */
+const DEEP_ACTIVE_FN =
+  'function __cicDeepActive() {' +
+  '  var doc = document, win = window, a = doc.activeElement;' +
+  '  while (a && a.tagName === "IFRAME") {' +
+  '    var d = null;' +
+  '    try { d = a.contentDocument } catch (err) { d = null }' +
+  '    if (!d) return {el: a, win: win, crossOrigin: true};' +
+  '    if (!d.activeElement) break;' +
+  '    doc = d; win = d.defaultView || win; a = d.activeElement;' +
+  '  }' +
+  '  return {el: a, win: win, crossOrigin: false};' +
+  '}'
 
 /**
  * 读当前焦点元素与光标（1-based line/col）。
@@ -484,16 +504,19 @@ export interface FocusState {
 export async function readInputFocus(tabId: number): Promise<FocusState> {
   const script =
     '(function () {' +
-    '  var active = document.activeElement;' +
-    '  if (!active) return {tag: "none", editable: false, monaco: false, line: null, col: null};' +
+    DEEP_ACTIVE_FN +
+    '  var deep = __cicDeepActive();' +
+    '  var active = deep.el;' +
+    '  if (!active) return {tag: "none", editable: false, monaco: false, line: null, col: null, crossOrigin: false};' +
     '  var tag = (active.tagName || "").toLowerCase();' +
+    '  if (deep.crossOrigin) return {tag: tag, editable: false, monaco: false, line: null, col: null, crossOrigin: true};' +
     '  var monacoHost = false;' +
     '  try { monacoHost = !!(active.closest && active.closest(".monaco-editor")) } catch (err) {}' +
     '  var editable = monacoHost || tag === "textarea" || tag === "input" || active.isContentEditable === true;' +
     '  var pos = null;' +
     '  try {' +
     '    if (monacoHost) {' +
-    '      var monaco = window.monaco;' +
+    '      var monaco = deep.win.monaco;' +
     '      if (monaco && monaco.editor && typeof monaco.editor.getEditors === "function") {' +
     '        var editor = monaco.editor.getEditors().find(function (e) {' +
     '          try { return e.getDomNode().contains(active) } catch (err) { return false }' +
@@ -512,11 +535,11 @@ export async function readInputFocus(tabId: number): Promise<FocusState> {
     '      }' +
     '    }' +
     '  } catch (err) {}' +
-    '  return {tag: tag, editable: editable, monaco: monacoHost, line: pos ? pos.line : null, col: pos ? pos.col : null};' +
+    '  return {tag: tag, editable: editable, monaco: monacoHost, line: pos ? pos.line : null, col: pos ? pos.col : null, crossOrigin: false};' +
     '})()'
   const value = await evaluateJson<Record<string, unknown>>(tabId, script)
   if (typeof value !== 'object' || value === null) {
-    return {tag: 'unknown', editable: false, monaco: false, insertionPoint: null}
+    return {tag: 'unknown', editable: false, monaco: false, insertionPoint: null, crossOrigin: false}
   }
   const line = value['line']
   const col = value['col']
@@ -527,6 +550,7 @@ export async function readInputFocus(tabId: number): Promise<FocusState> {
     editable: value['editable'] === true,
     monaco: value['monaco'] === true,
     insertionPoint,
+    crossOrigin: value['crossOrigin'] === true,
   }
 }
 
@@ -540,8 +564,10 @@ const MAX_FOCUSED_VALUE = 2_000
 export async function readFocusedValue(tabId: number): Promise<string | null> {
   const script =
     '(function () {' +
-    '  var el = document.activeElement;' +
-    '  if (!el) return null;' +
+    DEEP_ACTIVE_FN +
+    '  var deep = __cicDeepActive();' +
+    '  var el = deep.el;' +
+    '  if (!el || deep.crossOrigin) return null;' +
     '  try { if (el.closest && el.closest(".monaco-editor")) return null } catch (err) {}' +
     '  var tag = (el.tagName || "").toLowerCase();' +
     '  if (tag === "input" || tag === "textarea") return String(el.value);' +
@@ -562,16 +588,18 @@ export async function readFocusedValue(tabId: number): Promise<string | null> {
 export async function clearFocusedNativeValue(tabId: number): Promise<boolean> {
   const script =
     '(function () {' +
-    '  var el = document.activeElement;' +
-    '  if (!el) return false;' +
+    DEEP_ACTIVE_FN +
+    '  var deep = __cicDeepActive();' +
+    '  var el = deep.el, w = deep.win;' +
+    '  if (!el || deep.crossOrigin) return false;' +
     '  var tag = (el.tagName || "").toLowerCase();' +
     '  if (tag !== "input" && tag !== "textarea") return false;' +
-    '  var proto = tag === "input" ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;' +
+    '  var proto = tag === "input" ? w.HTMLInputElement.prototype : w.HTMLTextAreaElement.prototype;' +
     '  var desc = Object.getOwnPropertyDescriptor(proto, "value");' +
     '  if (!desc || !desc.set) return false;' +
     '  desc.set.call(el, "");' +
-    '  el.dispatchEvent(new Event("input", {bubbles: true}));' +
-    '  el.dispatchEvent(new Event("change", {bubbles: true}));' +
+    '  el.dispatchEvent(new w.Event("input", {bubbles: true}));' +
+    '  el.dispatchEvent(new w.Event("change", {bubbles: true}));' +
     '  return el.value === "";' +
     '})()'
   return (await evaluateJson<unknown>(tabId, script)) === true
@@ -585,10 +613,12 @@ export async function clearFocusedNativeValue(tabId: number): Promise<boolean> {
  * 严格防护：临时 input 必须真的拿到焦点才派发（否则中止、按存活处理），
  * 读取时还原原焦点并移除临时节点。探针自身异常一律按存活（宁可放过不可误伤）。
  */
+// prev 必须取 iframe 内的真实焦点：只还原到 <iframe> 本身时，内部 textarea 焦点会丢（JumpServer xterm）
 const KEY_PROBE_BEGIN =
   '(function(){' +
+  DEEP_ACTIVE_FN +
   'try{' +
-  'var prev=document.activeElement;' +
+  'var prev=__cicDeepActive().el;' +
   'var inp=document.createElement("input");' +
   'inp.setAttribute("aria-hidden","true");' +
   'inp.style.cssText="position:fixed;left:-9999px;top:0;width:8px;height:8px;opacity:0;border:0;padding:0";' +

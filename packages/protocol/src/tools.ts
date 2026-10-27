@@ -171,6 +171,8 @@ export const typeResult = z.object({
   layoutRecovered: z.boolean().optional(),
   /** 输入后焦点元素的实际值（原生 input/textarea/contentEditable）；Monaco 或 submit 后缺省。 */
   value: z.string().optional(),
+  /** 焦点在跨域 iframe 内，落盘无法验证（文本已发出，但没有读回确认）。 */
+  unverified: z.literal(true).optional(),
 })
 
 export const getTextParams = z.object({

@@ -9,7 +9,8 @@ vi.mock('./cdp', () => ({
 }))
 
 const {send} = await import('./cdp.js')
-const {activateTab, ensureFocusEmulation, forgetDomains, probeKeyPipeline} = await import('./cdp-commands.js')
+const {activateTab, ensureFocusEmulation, forgetDomains, probeKeyPipeline, readFocusedValue, readInputFocus} =
+  await import('./cdp-commands.js')
 const sendMock = vi.mocked(send)
 
 /** 最小 chrome.tabs / chrome.windows 桩，记录调用并支持注入行为。 */
@@ -170,5 +171,91 @@ describe('probeKeyPipeline（默认动作探针）', () => {
       return {}
     })
     await expect(probeKeyPipeline(1)).resolves.toBe(true)
+  })
+})
+
+describe('焦点读取下钻 iframe', () => {
+  /** 用假 document/window 真实执行页面脚本，覆盖 iframe 下钻逻辑。 */
+  function runAgainst(topDoc: unknown): void {
+    const win = {document: topDoc}
+    sendMock.mockImplementation(async (_tabId: number, method: string, params?: Record<string, unknown>) => {
+      if (method !== 'Runtime.evaluate') return {}
+      const expr = String(params?.['expression'] ?? '')
+      const value: unknown = new Function('document', 'window', `return ${expr}`)(topDoc, win)
+      return {result: {value}}
+    })
+  }
+  const textarea = (value: string) => ({tagName: 'TEXTAREA', value, selectionStart: value.length, closest: () => null})
+
+  beforeEach(() => {
+    sendMock.mockReset()
+  })
+
+  test('同源 iframe（JumpServer xterm）：读到内部 textarea，判定可编辑', async () => {
+    const inner = {activeElement: textarea('ls'), defaultView: {}}
+    runAgainst({activeElement: {tagName: 'IFRAME', contentDocument: inner}})
+    await expect(readInputFocus(1)).resolves.toMatchObject({tag: 'textarea', editable: true, crossOrigin: false})
+    await expect(readFocusedValue(1)).resolves.toBe('ls')
+  })
+
+  test('跨域 iframe（contentDocument 为 null）：标记 crossOrigin，不回读值', async () => {
+    runAgainst({activeElement: {tagName: 'IFRAME', contentDocument: null}})
+    await expect(readInputFocus(1)).resolves.toMatchObject({tag: 'iframe', editable: false, crossOrigin: true})
+    await expect(readFocusedValue(1)).resolves.toBeNull()
+  })
+
+  test('访问 contentDocument 抛错：同样按跨域处理', async () => {
+    const frame = {
+      tagName: 'IFRAME',
+      get contentDocument(): never {
+        throw new Error('SecurityError')
+      },
+    }
+    runAgainst({activeElement: frame})
+    await expect(readInputFocus(1)).resolves.toMatchObject({crossOrigin: true})
+  })
+
+  test('iframe 内无焦点元素：停在 iframe 上，按不可编辑报告', async () => {
+    runAgainst({activeElement: {tagName: 'IFRAME', contentDocument: {activeElement: null}}})
+    await expect(readInputFocus(1)).resolves.toMatchObject({tag: 'iframe', editable: false, crossOrigin: false})
+  })
+})
+
+describe('probeKeyPipeline 还原 iframe 内焦点', () => {
+  beforeEach(() => {
+    sendMock.mockReset()
+  })
+
+  test('焦点在同源 iframe 的 textarea：探测结束后还原到该 textarea，而非 <iframe>', async () => {
+    const focused: string[] = []
+    const inner = {tagName: 'TEXTAREA', focus: () => focused.push('inner-textarea')}
+    const frame = {tagName: 'IFRAME', contentDocument: {activeElement: inner}, focus: () => focused.push('iframe')}
+    const probeInput: {value: string; focus: () => void; remove: () => void; setAttribute: () => void; style: object} = {
+      value: '',
+      style: {},
+      setAttribute: () => undefined,
+      remove: () => undefined,
+      focus: () => {
+        doc.activeElement = probeInput as never
+      },
+    }
+    const doc: {activeElement: unknown; body: {appendChild: () => void}; createElement: () => unknown} = {
+      activeElement: frame,
+      body: {appendChild: () => undefined},
+      createElement: () => probeInput,
+    }
+    const win: Record<string, unknown> = {document: doc}
+    sendMock.mockImplementation(async (_tabId: number, method: string, params?: Record<string, unknown>) => {
+      if (method === 'Input.dispatchKeyEvent') {
+        if (params?.['type'] === 'keyDown') probeInput.value = 'b'
+        return {}
+      }
+      if (method !== 'Runtime.evaluate') return {}
+      const expr = String(params?.['expression'] ?? '')
+      const value: unknown = new Function('document', 'window', `return ${expr}`)(doc, win)
+      return {result: {value}}
+    })
+    await expect(probeKeyPipeline(1)).resolves.toBe(true)
+    expect(focused).toEqual(['inner-textarea'])
   })
 })
