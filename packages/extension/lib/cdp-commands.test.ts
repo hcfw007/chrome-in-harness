@@ -220,3 +220,42 @@ describe('焦点读取下钻 iframe', () => {
     await expect(readInputFocus(1)).resolves.toMatchObject({tag: 'iframe', editable: false, crossOrigin: false})
   })
 })
+
+describe('probeKeyPipeline 还原 iframe 内焦点', () => {
+  beforeEach(() => {
+    sendMock.mockReset()
+  })
+
+  test('焦点在同源 iframe 的 textarea：探测结束后还原到该 textarea，而非 <iframe>', async () => {
+    const focused: string[] = []
+    const inner = {tagName: 'TEXTAREA', focus: () => focused.push('inner-textarea')}
+    const frame = {tagName: 'IFRAME', contentDocument: {activeElement: inner}, focus: () => focused.push('iframe')}
+    const probeInput: {value: string; focus: () => void; remove: () => void; setAttribute: () => void; style: object} = {
+      value: '',
+      style: {},
+      setAttribute: () => undefined,
+      remove: () => undefined,
+      focus: () => {
+        doc.activeElement = probeInput as never
+      },
+    }
+    const doc: {activeElement: unknown; body: {appendChild: () => void}; createElement: () => unknown} = {
+      activeElement: frame,
+      body: {appendChild: () => undefined},
+      createElement: () => probeInput,
+    }
+    const win: Record<string, unknown> = {document: doc}
+    sendMock.mockImplementation(async (_tabId: number, method: string, params?: Record<string, unknown>) => {
+      if (method === 'Input.dispatchKeyEvent') {
+        if (params?.['type'] === 'keyDown') probeInput.value = 'b'
+        return {}
+      }
+      if (method !== 'Runtime.evaluate') return {}
+      const expr = String(params?.['expression'] ?? '')
+      const value: unknown = new Function('document', 'window', `return ${expr}`)(doc, win)
+      return {result: {value}}
+    })
+    await expect(probeKeyPipeline(1)).resolves.toBe(true)
+    expect(focused).toEqual(['inner-textarea'])
+  })
+})

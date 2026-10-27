@@ -613,10 +613,12 @@ export async function clearFocusedNativeValue(tabId: number): Promise<boolean> {
  * 严格防护：临时 input 必须真的拿到焦点才派发（否则中止、按存活处理），
  * 读取时还原原焦点并移除临时节点。探针自身异常一律按存活（宁可放过不可误伤）。
  */
+// prev 必须取 iframe 内的真实焦点：只还原到 <iframe> 本身时，内部 textarea 焦点会丢（JumpServer xterm）
 const KEY_PROBE_BEGIN =
   '(function(){' +
+  DEEP_ACTIVE_FN +
   'try{' +
-  'var prev=document.activeElement;' +
+  'var prev=__cicDeepActive().el;' +
   'var inp=document.createElement("input");' +
   'inp.setAttribute("aria-hidden","true");' +
   'inp.style.cssText="position:fixed;left:-9999px;top:0;width:8px;height:8px;opacity:0;border:0;padding:0";' +
