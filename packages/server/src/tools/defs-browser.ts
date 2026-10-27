@@ -216,7 +216,11 @@ const type = defineTool({
     'focus:"none" skips the implicit click: with ref it only DOM.focuses the element (caret stays put); ' +
     'without ref it types into whatever is focused. ' +
     'Landing is verified: when focus is not on an editable element the call fails with INPUT_NOT_LANDED ' +
-    'instead of silently discarding the text. Returns the caret landing point insertionPoint {line, col} ' +
+    'instead of silently discarding the text. Focus inside same-origin iframes (e.g. web terminals) is followed ' +
+    'to the inner element; inside a cross-origin iframe it cannot be read, so the text is sent and the result is ' +
+    'marked unverified — check it with a screenshot or get_text. ' +
+    'text is capped at 10000 characters: split longer input across several calls, with submit only on the last. ' +
+    'Returns the caret landing point insertionPoint {line, col} ' +
     '(1-based) and insertedLines for self-checking where the text landed, plus the field\'s resulting value ' +
     '(native inputs/textareas/contenteditable; omitted for Monaco and after submit).',
   schema: typeParams.shape,
@@ -234,8 +238,12 @@ const type = defineTool({
     if (result.layoutRecovered === true) bits.push('layout recovered')
     const suffix = bits.length > 0 ? ` (${bits.join(', ')})` : ''
     const value = result.value !== undefined ? `\nValue now: ${JSON.stringify(result.value)}` : ''
+    const unverified =
+      result.unverified === true
+        ? '\nUnverified: focus is inside a cross-origin iframe, so landing could not be checked — confirm with a screenshot.'
+        : ''
     return toolText(
-      `Typed into ${args.ref ?? 'focused element'}${suffix}${args.submit ? ' and pressed Enter' : ''}${value}`,
+      `Typed into ${args.ref ?? 'focused element'}${suffix}${args.submit ? ' and pressed Enter' : ''}${value}${unverified}`,
     )
   },
 })

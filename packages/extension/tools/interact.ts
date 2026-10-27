@@ -339,7 +339,8 @@ export const typeText: ToolHandler = async (params) => {
     }
   }
   const assertLanded = (state: FocusState | null, when: 'before' | 'after'): void => {
-    if (state === null || state.editable) return
+    // 跨域 iframe 内的焦点读不到：只能报「无法验证」，不能断言「没落盘」
+    if (state === null || state.editable || state.crossOrigin) return
     const hint =
       when === 'before'
         ? 'text would go nowhere. Click the editor/input ref first (or wait editorRendered), then retry.'
@@ -393,6 +394,7 @@ export const typeText: ToolHandler = async (params) => {
     insertedLines: number
     insertionPoint?: CursorPosition
     value?: string
+    unverified?: true
   }> => {
     const after = await readFocusSafe()
     assertLanded(after, 'after')
@@ -401,6 +403,7 @@ export const typeText: ToolHandler = async (params) => {
     return {
       mode,
       insertedLines,
+      ...(after !== null && after.crossOrigin ? {unverified: true as const} : {}),
       ...(after !== null && after.insertionPoint !== null
         ? {insertionPoint: after.insertionPoint}
         : {}),
