@@ -19,8 +19,10 @@
 - Browser access checks live in `packages/extension/tools/access.ts`, not the CDP transport. Check managed-tab membership and domain allowlist **before** debugger access; omitted `tabId` selects a managed tab, never the user's arbitrary active tab.
 - Refs encode worker era and snapshot version. Preserve explicit `STALE_REF`/`NO_SNAPSHOT` failures across restarts and invalidation; same-worker recovery must identify the element rather than reuse its numeric ref blindly (`tools/ref-recovery.ts`).
 - Input tools must not re-dispatch a click or key when the outcome is uncertain: a second click on a button that keeps its dialog open (e.g. "add row") duplicates the side effect. Report the observed state instead (`click` returns `dialogStillOpen`), and verify edits by reading back (`type` returns the field `value`).
+- CDP `Input.*` events are silently dropped on background tabs. Input tools enable focus emulation in a shared preamble (`tools/interact.ts`) instead of activating the tab; new input tools must reuse it and must not steal focus from the user.
 - Ref-based input (`click` / `type` / `hover` / `select_option`) goes through `locateUncovered` in `tools/interact.ts`: it hit-tests the element center and throws `ELEMENT_COVERED` rather than clicking a modal mask (antd closes the modal on mask click). `click_at` is the deliberate escape hatch and is not checked. New ref-clicking tools should use the same helper.
 - CDP key events on macOS: Ctrl+A moves the caret to line start, and synthetic shortcuts do not trigger editing commands by themselves. Select-all needs the Meta modifier plus `commands: ['selectAll']` on `Input.dispatchKeyEvent` (`dispatchKey` in `lib/cdp-commands.ts`, `selectAllModifier` in `lib/keymap.ts`).
+- Source comments and launcher CLI output are in Chinese; MCP tool descriptions and results (read by agents) are in English. Keep each side consistent.
 - Tool-result wording lives in the server `defs-*.ts` `run()` functions, not in the extension; `evaluate_script` output must stay `JSON.parse`-able (strings are JSON-quoted, truncation goes on a separate `[TRUNCATED]` line).
 
 ## Local runtime gotchas
