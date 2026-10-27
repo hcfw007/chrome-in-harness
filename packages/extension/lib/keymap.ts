@@ -13,6 +13,11 @@ const MODIFIER_BITS: Record<InputModifier, number> = {
   shift: 8,
 }
 
+/** 全选修饰键：macOS 是 Cmd（Ctrl+A 在 macOS 是「移到行首」），其余平台 Ctrl。入参为 userAgent。 */
+export function selectAllModifier(userAgent: string): InputModifier {
+  return /Mac OS X|Macintosh/i.test(userAgent) ? 'meta' : 'ctrl'
+}
+
 export function modifierBitmask(modifiers: readonly InputModifier[] | undefined): number {
   let mask = 0
   for (const m of modifiers ?? []) mask |= MODIFIER_BITS[m] ?? 0

@@ -159,6 +159,19 @@ describe('browser defs', () => {
     expect((content[0] as {text: string}).text).toBe('Clicked e3 (snapshot failed: detached; call snapshot to continue)')
   })
 
+  test('click reports a dialog that stayed open instead of retrying', async () => {
+    const fake = fakeBridge({dialogStillOpen: true})
+    const content = await run(byName('click'), {ref: 'e3'}, fake.call)
+    expect(fake.received).toHaveLength(1)
+    expect((content[0] as {text: string}).text).toBe('Clicked e3 (a dialog is still open)')
+  })
+
+  test('type reports the resulting field value', async () => {
+    const fake = fakeBridge({mode: 'insert', insertedLines: 0, value: '懒加载销售'})
+    const content = await run(byName('type'), {ref: 'e2', text: '懒加载销售', clear: true}, fake.call)
+    expect((content[0] as {text: string}).text).toBe('Typed into e2 (cleared first)\nValue now: "懒加载销售"')
+  })
+
   test('click_at forwards coordinates and confirms', async () => {
     const fake = fakeBridge({})
     const content = await run(byName('click_at'), {x: 2466, y: 22, coordinates: true}, fake.call)
@@ -296,6 +309,55 @@ describe('browser defs', () => {
     expect((content[1] as {text: string}).text).toBe(
       'Viewport 1280x720 CSS px, dpr 1; image px = CSS px — use these coordinates with click_at.',
     )
+  })
+
+  test('screenshot reports the real image-to-CSS ratio for a downscaled wide viewport', async () => {
+    const fake = fakeBridge({
+      data: 'aGVsbG8=', mimeType: 'image/png', width: 2560, height: 1267, dpr: 1, scale: 0.6125,
+      imageWidth: 1568, imageHeight: 776, cssScale: 0.6125,
+    })
+    const content = await run(byName('screenshot'), {}, fake.call)
+    expect((content[1] as {text: string}).text).toBe(
+      'Viewport 2560x1267 CSS px, dpr 1; image 1568x776 — 1 image px = 1.63 CSS px. ' +
+        'Pass coordinates measured on this image to click_at with space:"image".',
+    )
+  })
+
+  test('screenshot says no conversion is needed when the image matches CSS pixels', async () => {
+    const fake = fakeBridge({
+      data: 'aGVsbG8=', mimeType: 'image/png', width: 1280, height: 720, dpr: 2, scale: 0.5,
+      imageWidth: 1280, imageHeight: 720, cssScale: 1,
+    })
+    const content = await run(byName('screenshot'), {}, fake.call)
+    expect((content[1] as {text: string}).text).toBe(
+      'Viewport 1280x720 CSS px, dpr 2; image 1280x720 — image px = CSS px, use these coordinates with click_at directly.',
+    )
+  })
+
+  test('hover by selector reports the element and point', async () => {
+    const fake = fakeBridge({x: 120, y: 40.25, tag: 'span'})
+    const content = await run(byName('hover'), {selector: '[data-testid="lazy"]'}, fake.call)
+    expect(fake.received[0]).toEqual({tool: 'hover', params: {selector: '[data-testid="lazy"]'}})
+    expect((content[0] as {text: string}).text).toBe('Hovered "[data-testid=\\"lazy\\"]" <span> at (120, 40.3)')
+  })
+
+  test('hover rejects ambiguous locators before reaching the extension', async () => {
+    const fake = fakeBridge({})
+    await expect(run(byName('hover'), {ref: 'e1', x: 1, y: 2}, fake.call)).rejects.toThrow('exactly one of')
+    expect(fake.received).toHaveLength(0)
+  })
+
+  test('select_option reports the chosen option and the field value', async () => {
+    const fake = fakeBridge({kind: 'custom', selected: '懒加载销售', value: '懒加载销售'})
+    const content = await run(byName('select_option'), {ref: 'e7', text: '懒加载销售'}, fake.call)
+    expect((content[0] as {text: string}).text).toBe('Selected "懒加载销售" in e7 (custom select); field now shows "懒加载销售"')
+  })
+
+  test('click_at with space:"image" reports the converted CSS point', async () => {
+    const fake = fakeBridge({css: {x: 270, y: 174}})
+    const content = await run(byName('click_at'), {x: 165.4, y: 106.6, coordinates: true, space: 'image'}, fake.call)
+    expect(fake.received[0]?.params).toMatchObject({space: 'image'})
+    expect((content[0] as {text: string}).text).toBe('Clicked at image (165.4, 106.6) → CSS (270, 174)')
   })
 
   test('screenshot appends viewport metrics when the extension reports them', async () => {
@@ -486,6 +548,14 @@ describe('tab defs', () => {
     expect(byName('ensure_tab').description).toContain('Save')
   })
 
+  test('ensure_tab tells the agent its old tab was closed and to save the replacement id', async () => {
+    const fake = fakeBridge({tabId: 9, url: 'about:blank', reused: false, replacedTabId: 4})
+    const content = await run(byName('ensure_tab'), {tabId: 4}, fake.call)
+    const parsed = JSON.parse((content[0] as {text: string}).text)
+    expect(parsed).toMatchObject({tabId: 9, reused: false, replacedTabId: 4})
+    expect(parsed.note).toBe('tab 4 was closed; opened tab 9 instead. Use tabId 9 from now on.')
+  })
+
   test('takeover_tab confirms the tab is managed', async () => {
     const fake = fakeBridge({tabId: 4, url: 'https://leetcode.com/problems/two-sum/'})
     const content = await run(byName('takeover_tab'), {tabId: 4}, fake.call)
@@ -511,10 +581,25 @@ describe('tab defs', () => {
 })
 
 describe('evaluate defs', () => {
-  test('evaluate_script renders value and type, flags truncation', async () => {
+  test('evaluate_script returns the bare JSON value and flags truncation on its own line', async () => {
     const fake = fakeBridge({value: '{"a":1}', type: 'object', truncated: true})
     const content = await run(byName('evaluate_script'), {expression: '({a: 1})'}, fake.call)
-    expect(content).toEqual([{type: 'text', text: '<object> {"a":1} (TRUNCATED)'}])
+    expect(content).toEqual([{type: 'text', text: '{"a":1}\n[TRUNCATED]'}])
+  })
+
+  test('evaluate_script output parses as JSON for strings, numbers and booleans', async () => {
+    const cases: Array<[unknown, string, unknown]> = [
+      ['he said "hi"', 'string', 'he said "hi"'],
+      ['42', 'number', 42],
+      ['true', 'boolean', true],
+      ['[1,2]', 'object', [1, 2]],
+      ['null', 'object', null],
+    ]
+    for (const [value, type, parsed] of cases) {
+      const fake = fakeBridge({value, type, truncated: false})
+      const content = await run(byName('evaluate_script'), {expression: 'x'}, fake.call)
+      expect(JSON.parse((content[0] as {text: string}).text)).toEqual(parsed)
+    }
   })
 
   test('evaluate_script forwards awaitPromise and tabId', async () => {

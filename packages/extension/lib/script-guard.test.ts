@@ -57,6 +57,14 @@ describe('guardScript — size & shape', () => {
     expect(guardScript('a'.repeat(8_001), false).ok).toBe(false)
   })
 
+  test('accepts expressions that start with a unary operator', () => {
+    expect(guardScript('!![...document.querySelectorAll("tr")].length', false).ok).toBe(true)
+    expect(guardScript('!document.hidden', false).ok).toBe(true)
+    expect(guardScript('-window.scrollY', false).ok).toBe(true)
+    expect(guardScript('+document.querySelector("input").value', false).ok).toBe(true)
+    expect(guardScript('~location.pathname.indexOf("/a")', false).ok).toBe(true)
+  })
+
   test('rejects expressions that start with a non-expression token', () => {
     expect(guardScript('; alert(1)', false).ok).toBe(false)
     expect(guardScript('// comment', false).ok).toBe(false)

@@ -12,20 +12,31 @@ const evaluateScript = defineTool({
   name: 'evaluate_script',
   title: 'Run a restricted script in the page',
   description:
-    'Evaluate a restricted JavaScript expression in the page context of the managed tab and return its JSON value. ' +
-    'Only read-style scripts are allowed: network access (fetch/XHR/WebSocket/sendBeacon), eval/Function, ' +
-    'navigation (location/window.open), document.write, debugger and chrome.* are rejected. ' +
-    'Runs with a user gesture, so element.click() inside the script can trigger page handlers that need user ' +
-    'activation (e.g. a button that calls window.open) — still prefer click(ref) for real input events. ' +
+    'Evaluate a JavaScript expression in the page context of the managed tab. ' +
+    'The result text is the bare JSON value (strings are JSON-quoted), so it can be passed to JSON.parse directly; ' +
+    'an undefined result is the text `undefined`. ' +
+    'The script MAY change the page: DOM writes and element.click() are allowed, and it runs with a user gesture ' +
+    'so handlers that need user activation work — prefer click(ref) when you want real input events. ' +
+    'A blacklist rejects network access (fetch/XHR/WebSocket/sendBeacon), eval/Function, navigation ' +
+    '(location assignment/window.open), document.write, debugger and chrome.*. ' +
+    'Accepted forms: an expression (including ones starting with ! ~ + -), an IIFE, or a block. ' +
     'Pass awaitPromise:true with an async IIFE to await a Promise; wrap the expression in (async () => ...)() yourself. ' +
-    'Large results are truncated and flagged with truncated:true.',
+    'Large results are cut off and followed by a [TRUNCATED] line (the cut JSON no longer parses).',
   schema: evaluateScriptParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'evaluate_script', args, evaluateScriptResult)
-    const suffix = result.truncated ? ' (TRUNCATED)' : ''
-    return toolText(`<${result.type}> ${result.value}${suffix}`)
+    const text = formatEvaluateValue(result.type, String(result.value))
+    return toolText(result.truncated ? `${text}\n[TRUNCATED]` : text)
   },
 })
+
+/**
+ * 扩展回传的 value 已是文本：对象/数组为 JSON、数字/布尔为字面量，字符串是原文。
+ * 字符串补 JSON 引号，使整个结果可直接 JSON.parse；undefined 不是 JSON，原样输出。
+ */
+export function formatEvaluateValue(type: string, value: string): string {
+  return type === 'string' ? JSON.stringify(value) : value
+}
 
 const requestPermission = defineTool({
   name: 'request_permission',

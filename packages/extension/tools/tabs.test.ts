@@ -265,6 +265,7 @@ describe('ensure_tab', () => {
     installChrome({create})
     await expect(ensureTab({tabId, url: 'https://project.feishu.cn'})).resolves.toEqual({
       tabId: 9001, url: 'https://project.feishu.cn', reused: false,
+      ...(tabId !== undefined ? {replacedTabId: tabId} : {}),
     })
     expect(create).toHaveBeenCalledWith({url: 'https://project.feishu.cn', active: false})
   })
@@ -282,7 +283,7 @@ describe('ensure_tab', () => {
     const create = vi.fn(async () => ({id: 9001}))
     const group = vi.fn(async () => 7)
     installChrome({create, group})
-    await expect(ensureTab({tabId: 42})).rejects.toThrow('TAB_NOT_MANAGED')
+    await expect(ensureTab({tabId: 42})).rejects.toThrow(/TAB_NOT_MANAGED.*Call ensure_tab without tabId/)
     expect(create).not.toHaveBeenCalled()
     expect(group).not.toHaveBeenCalled()
   })

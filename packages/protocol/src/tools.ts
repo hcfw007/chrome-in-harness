@@ -30,6 +30,8 @@ export const TOOL_ERROR_CODES = {
   KEY_PIPELINE_DEAD: 'KEY_PIPELINE_DEAD',
   /** 焦点不在可编辑元素上，输入的文本不会落盘（type 显式报错而非静默成功）。 */
   INPUT_NOT_LANDED: 'INPUT_NOT_LANDED',
+  /** 目标中心点被其他元素盖住（遮罩/浮层），真实点击会落到那个元素上，故不派发。 */
+  ELEMENT_COVERED: 'ELEMENT_COVERED',
   /** 目标 tab 已关闭（常见于会话间隔后沿用旧 tabId）——开新 tab 或改用现存 tab。 */
   TAB_CLOSED: 'TAB_CLOSED',
   /** takeover 目标在用户自建的其他分组里：不擅自拆用户的分组，请用户先移出。 */
@@ -82,22 +84,52 @@ export const clickParams = z.object({
 
 /**
  * 坐标点击：ref 无法命中时（iframe/Canvas/无 ref 的 icon-only 容器等）的兜底。
- * 坐标是视口 CSS 像素；必须显式传 `coordinates: true` 作为意图标记。
+ * 坐标默认是视口 CSS 像素；space='image' 时是本 tab 最近一次截图上的像素，由扩展换算。
+ * 必须显式传 `coordinates: true` 作为意图标记。
  * button 支持左/中/右键；clickCount 支持双击/三击；modifiers 支持组合键。
  */
 export const clickAtParams = z.object({
   x: z.number().finite(),
   y: z.number().finite(),
   coordinates: z.literal(true),
+  space: z.enum(['css', 'image']).optional(),
   button: z.enum(['left', 'right', 'middle']).optional(),
   clickCount: z.number().int().min(1).max(3).optional(),
   modifiers: inputModifiersSchema.optional(),
   ...tabIdField,
 })
 
-export const hoverParams = z.object({
-  ref: z.string().regex(REF_PATTERN),
+/**
+ * hover：ref / selector / text / 坐标（x+y，视口 CSS 像素）四选一。
+ * 无 ref 的纯图标元素（tooltip 触发器）用 selector 或坐标即可悬停。
+ * shape 不带 refine（给 server 注册 inputSchema），hoverParams 带 refine（extension 校验）。
+ */
+export const hoverParamsShape = {
+  ref: z.string().regex(REF_PATTERN).optional(),
+  selector: z.string().min(1).max(500).optional(),
+  text: z.string().min(1).max(200).optional(),
+  x: z.number().finite().optional(),
+  y: z.number().finite().optional(),
   ...tabIdField,
+}
+
+export function hoverParamsError(p: {ref?: unknown; selector?: unknown; text?: unknown; x?: unknown; y?: unknown}): string | undefined {
+  if ((p.x === undefined) !== (p.y === undefined)) return 'pass x and y together'
+  const count = [p.ref, p.selector, p.text, p.x].filter((v) => v !== undefined).length
+  return count === 1 ? undefined : `pass exactly one of ref / selector / text / x+y (got ${count})`
+}
+
+export const hoverParams = z.object(hoverParamsShape).superRefine((p, ctx) => {
+  const message = hoverParamsError(p)
+  if (message !== undefined) ctx.addIssue({code: 'custom', message})
+})
+
+/** 实际悬停的视口 CSS 坐标与该点元素（坐标模式没有元素描述）。 */
+export const hoverResult = z.object({
+  x: z.number().optional(),
+  y: z.number().optional(),
+  tag: z.string().optional(),
+  text: z.string().optional(),
 })
 
 export const pressKeyParams = z.object({
@@ -114,7 +146,7 @@ export const pressKeyParams = z.object({
  * mode='verbatim' 一次性整段插入且拒绝 submit（避免 Monaco 自动缩进/括号自动补全）；
  * mode='set' 走 monaco setValue 原子写整个缓冲（绕开键盘/焦点/IME 通路，窗口失焦也稳），
  * 此时 ref 可省（页面仅一个编辑器时自动选中）；
- * clear=true 输入前先 Ctrl+A + Delete 清空；focus='none' 跳过隐式点击。
+ * clear=true 输入前先全选（macOS Cmd+A，其余 Ctrl+A）+ Delete 清空，残留则报错；focus='none' 跳过隐式点击。
  */
 export const typeParams = z.object({
   ref: z.string().regex(REF_PATTERN).optional(),
@@ -137,6 +169,8 @@ export const typeResult = z.object({
     .optional(),
   /** mode="set" 时编辑器曾塌缩并被自动 layout() 恢复（resize 后 5×5 窄条的防御性自愈）。 */
   layoutRecovered: z.boolean().optional(),
+  /** 输入后焦点元素的实际值（原生 input/textarea/contentEditable）；Monaco 或 submit 后缺省。 */
+  value: z.string().optional(),
 })
 
 export const getTextParams = z.object({
@@ -185,6 +219,8 @@ export const ensureTabResult = z.object({
   tabId: TAB_ID,
   url: z.string(),
   reused: z.boolean(),
+  /** 传入的 tabId 已关闭、因而新建了替代 tab 时，原 tabId（调用方必须改存新 id）。 */
+  replacedTabId: TAB_ID.optional(),
 })
 
 export const tabSelectParams = z.object({tabId: TAB_ID})
@@ -443,10 +479,16 @@ export const hitInfoSchema = z.object({
 
 export const clickAtResult = z.object({
   hit: hitInfoSchema.nullable().optional(),
+  /** space='image' 时实际点击的视口 CSS 坐标。 */
+  css: z.object({x: z.number(), y: z.number()}).optional(),
 })
 
-/** snapshot 未请求时两字段均缺省；点击已生效但取快照失败时只带 snapshotError。 */
+/**
+ * snapshot 未请求时两字段均缺省；点击已生效但取快照失败时只带 snapshotError。
+ * dialogStillOpen：点击前后都有打开的对话框（点击只派发一次，不自动重试）。
+ */
 export const clickResult = z.object({
+  dialogStillOpen: z.boolean().optional(),
   snapshot: snapshotResult.optional(),
   snapshotError: z.string().optional(),
 })
@@ -458,8 +500,13 @@ export const screenshotResult = z.object({
   width: z.number().optional(),
   height: z.number().optional(),
   dpr: z.number().optional(),
-  /** 图片像素 / 设备像素的缩放比：1/dpr 时图片像素 == CSS 像素。 */
+  /** 图片像素 / 设备像素的缩放比（旧字段，保留兼容）。 */
   scale: z.number().optional(),
+  /** 回传图片的实际像素尺寸。 */
+  imageWidth: z.number().int().positive().optional(),
+  imageHeight: z.number().int().positive().optional(),
+  /** 图片像素 / CSS 像素：1 = 图片坐标即 CSS 坐标；< 1 = 图片被缩小过。 */
+  cssScale: z.number().positive().optional(),
 })
 
 export interface TabSummary {
@@ -500,6 +547,27 @@ export const pingResult = z.object({
   startedAt: z.number().optional(),
 })
 
+/**
+ * select_option：按可见文本选下拉项。ref 指向触发器（原生 <select>，或自定义下拉的选择框）。
+ * search=true 时点开后先把 text 输入搜索框过滤（虚拟列表里未渲染的项靠它找到）。
+ */
+export const selectOptionParams = z.object({
+  ref: z.string().regex(REF_PATTERN),
+  text: z.string().min(1).max(200),
+  search: z.boolean().optional(),
+  timeoutMs: z.number().int().positive().max(10_000).optional(),
+  ...tabIdField,
+})
+
+export const selectOptionResult = z.object({
+  /** native = 原生 <select>；custom = 自定义下拉（点击了选项）。 */
+  kind: z.enum(['native', 'custom']),
+  /** 实际选中的选项文本。 */
+  selected: z.string(),
+  /** 选完后触发器显示的值（自定义下拉重渲染时可能读不回）。 */
+  value: z.string().optional(),
+})
+
 /** 全部工具名，extension 注册与 server 注册共用，防两端名字漂移。 */
 export const TOOL_NAMES = [
   'ping',
@@ -532,6 +600,7 @@ export const TOOL_NAMES = [
   'probe',
   'get_html',
   'wait_for_response',
+  'select_option',
 ] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]

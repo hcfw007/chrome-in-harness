@@ -1,7 +1,9 @@
 /** ref 交互工具：click / hover / type / press_key / scroll。ref 三态解析 + CDP 真实输入。 */
-import {clickAtParams, scrollToParams} from '@chrome-in-harness/protocol'
+import {TOOL_ERROR_CODES, clickAtParams, hoverParams, scrollToParams} from '@chrome-in-harness/protocol'
 import {ensureAttached} from '../lib/cdp'
 import {
+  callOnNode,
+  clearFocusedNativeValue,
   describeNodeRect,
   dispatchClick,
   dispatchHover,
@@ -15,6 +17,7 @@ import {
   getViewportMetrics,
   insertText,
   monacoSetValue,
+  readFocusedValue,
   readInputFocus,
   scrollIntoViewIfNeeded,
   viewportCenter,
@@ -22,9 +25,17 @@ import {
 import type {ClickOptions, CursorPosition, FocusState} from '../lib/cdp-commands'
 import {buildHitTestScript, parseHitTestResult} from '../lib/hit-test'
 import type {HitInfo} from '../lib/hit-test'
-import {resolveKey} from '../lib/keymap'
+import {resolveKey, selectAllModifier} from '../lib/keymap'
 import type {InputModifier} from '../lib/keymap'
-import {buildScrollToScript, CENTER_AND_DESCRIBE, parseScrollToReceipt} from '../lib/scroll-locate'
+import {buildOcclusionFn, parseOcclusion} from '../lib/occlusion'
+import type {OcclusionResult} from '../lib/occlusion'
+import {imagePointToCss, lastScreenshot} from '../lib/screenshot-geometry'
+import {
+  buildFindElementExpression,
+  buildScrollToScript,
+  CENTER_AND_DESCRIBE,
+  parseScrollToReceipt,
+} from '../lib/scroll-locate'
 import {planVerbatim} from '../lib/verbatim'
 import {authorizeTab} from './access'
 import {parseToolParams} from './params'
@@ -54,6 +65,33 @@ async function locate(tabId: number, backendDOMNodeId: number): Promise<{x: numb
 }
 
 /**
+ * 滚进视野、取中心点，并确认该点没被其他元素盖住；被盖住就抛 ELEMENT_COVERED，不派发任何输入。
+ * 检查本身失败（页面忙、脚本异常）按可点处理：遮挡检查只能拦下确定的误点，不能制造新失败。
+ */
+export async function locateUncovered(
+  tabId: number,
+  backendDOMNodeId: number,
+  tool: string,
+): Promise<{x: number; y: number}> {
+  const point = await locate(tabId, backendDOMNodeId)
+  let occlusion: OcclusionResult
+  try {
+    occlusion = parseOcclusion(await callOnNode(tabId, backendDOMNodeId, buildOcclusionFn(point.x, point.y)))
+  } catch {
+    return point
+  }
+  if (occlusion.kind === 'covered') {
+    const pointer = tool === 'hover' ? 'the pointer would rest on' : 'a real click would land on'
+    throw new Error(
+      `${TOOL_ERROR_CODES.ELEMENT_COVERED}: ${tool} sent no input — the target's center (${Math.round(point.x)}, ${Math.round(point.y)}) ` +
+        `is covered by ${occlusion.by}, so ${pointer} that element instead (clicking a modal mask closes the modal). ` +
+        'Close or finish the overlay first, or act on an element inside it.',
+    )
+  }
+  return point
+}
+
+/**
  * 页面上是否有「打开且可见」的对话框。
  * 只查存在性会误判：不少实现（如本地回归页）关闭 dialog 仅切 display:none，节点常驻 DOM，
  * 导致点击明明已生效仍触发键盘重试（对已隐藏节点 DOM.focus 报 not focusable）。
@@ -71,57 +109,49 @@ const RENDER_SETTLED =
   'new Promise(function(r){var t=setTimeout(function(){r(true)},300);' +
   'requestAnimationFrame(function(){requestAnimationFrame(function(){clearTimeout(t);r(true)})})})'
 
+/** 点击后等弹层关闭动画结束再判断对话框是否仍在。 */
+const DIALOG_SETTLE_MS = 150
+
 export const click: ToolHandler = async (params) => {
   const {ref, tabId, snapshot: wantSnapshot} = params as {ref: string; tabId?: number; snapshot?: boolean}
   const target = await prepareInputTab(tabId)
-  await withRef(target.tabId, ref, async (entry) => {
-    const {x, y} = await locate(target.tabId, entry.backendDOMNodeId)
-    // 对话框守卫：弹窗项常因 React 重渲染在测量与点击之间挪位导致点击丢失。
-    // 点击前有对话框、静置后仍在 → 重测坐标补一击（文本节点 ref 无法 DOM.focus，
-    // 第二击是唯一通用补刀路径）；补击时元素已消失视为成功（弹层正在关闭）。
+  const dialogStillOpen = await withRef(target.tabId, ref, async (entry) => {
+    const {x, y} = await locateUncovered(target.tabId, entry.backendDOMNodeId, 'click')
+    // 只点一次、绝不自动补击：弹窗里「添加一行」这类按钮点完弹窗本就保持打开，
+    // 补击会产生重复副作用。点击前后都有对话框时只回报给调用方，由其按快照判断。
     const dialogBefore = await evaluateJson<boolean>(target.tabId, HAS_OPEN_DIALOG)
     await dispatchClick(target.tabId, x, y)
-    if (dialogBefore) {
-      const stillOpen = async (): Promise<boolean> => {
-        // 弹层关闭有动画/异步延迟，立即检查会把已生效的点击误判为丢失
-        await new Promise((resolve) => setTimeout(resolve, 150))
-        return evaluateJson<boolean>(target.tabId, HAS_OPEN_DIALOG)
-      }
-      if (await stillOpen()) {
-        try {
-          const point = await locate(target.tabId, entry.backendDOMNodeId)
-          await dispatchClick(target.tabId, point.x, point.y)
-        } catch {
-          // 重测失败 = 元素正在消失，原始点击大概率已生效
-          return
-        }
-        if (await stillOpen()) {
-          throw new Error(
-            'click dispatched twice but the dialog is still open — snapshot to check its state and try a different target',
-          )
-        }
-      }
+    if (!dialogBefore) return false
+    // 弹层关闭有动画/异步延迟，立即检查会把已关闭的弹窗误报为仍打开
+    await new Promise((resolve) => setTimeout(resolve, DIALOG_SETTLE_MS))
+    try {
+      return await evaluateJson<boolean>(target.tabId, HAS_OPEN_DIALOG)
+    } catch {
+      return false
     }
   })
-  if (wantSnapshot !== true) return {}
+  const dialogField = dialogStillOpen ? {dialogStillOpen: true} : {}
+  if (wantSnapshot !== true) return dialogField
   // 点击已生效：快照失败不能让调用方误以为点击失败而重点
   try {
     await evaluateJson<boolean>(target.tabId, RENDER_SETTLED)
-    return {snapshot: await snapshot({tabId: target.tabId})}
+    return {...dialogField, snapshot: await snapshot({tabId: target.tabId})}
   } catch (error) {
-    return {snapshotError: error instanceof Error ? error.message : String(error)}
+    return {...dialogField, snapshotError: error instanceof Error ? error.message : String(error)}
   }
 }
 
 /**
  * 坐标点击（ref 命中不了时的兜底：iframe / Canvas / 无 ref 的 icon-only 容器）。
- * 坐标是视口 CSS 像素；直接走 CDP Input.*，不做元素解析。
+ * 坐标默认是视口 CSS 像素；space="image" 时按本 tab 最近一次截图的比例换算成 CSS 像素，
+ * 截图后视口变过则拒绝（旧比例不再成立）。直接走 CDP Input.*，不做元素解析。
  * button 支持左/中/右键，clickCount 支持双击，modifiers 支持组合键。
- * 越界坐标显式报错（现采视口度量，无任何跨调用缓存）——静默落点是第二轮战报的教训。
+ * 越界坐标显式报错（现采视口度量）——静默落点是第二轮战报的教训。
  */
 export const clickAt: ToolHandler = async (params) => {
   // run_actions 步骤绕过 server 校验：x/y 会拼进 hit-test 页面脚本，必须按 schema 校验而非 cast
-  const {x, y, tabId, button, clickCount, modifiers} = parseToolParams('click_at', clickAtParams, params)
+  const parsed = parseToolParams('click_at', clickAtParams, params)
+  const {tabId, button, clickCount, modifiers, space} = parsed
   const target = await prepareInputTab(tabId)
   const metrics = await getViewportMetrics(target.tabId)
   if (metrics.width <= 0 || metrics.height <= 0) {
@@ -129,6 +159,14 @@ export const clickAt: ToolHandler = async (params) => {
       'WINDOW_NOT_INTERACTIVE: the viewport reads 0x0 (window minimized or tab hidden), ' +
         'input would be silently dropped. Restore the window and retry.',
     )
+  }
+  let {x, y} = parsed
+  if (space === 'image') {
+    const viewport = {width: Math.round(metrics.width), height: Math.round(metrics.height)}
+    const converted = imagePointToCss(lastScreenshot(target.tabId), viewport, x, y)
+    if (!converted.ok) throw new Error(`click_at space="image": ${converted.reason}`)
+    x = converted.x
+    y = converted.y
   }
   if (x < 0 || y < 0 || x > metrics.width || y > metrics.height) {
     throw new Error(
@@ -149,27 +187,81 @@ export const clickAt: ToolHandler = async (params) => {
     hit = undefined
   }
   await dispatchClick(target.tabId, x, y, options)
-  return hit === undefined ? {} : {hit}
+  return {
+    ...(hit === undefined ? {} : {hit}),
+    ...(space === 'image' ? {css: {x, y}} : {}),
+  }
 }
 
+/**
+ * 悬停：ref / selector / text / 坐标四选一。selector/text 复用 scroll_to 的页面内定位
+ * （滚到视口中央后取 rect 中心），无 ref 的纯图标 tooltip 触发器也能悬停。
+ */
 export const hover: ToolHandler = async (params) => {
-  const {ref, tabId} = params as {ref: string; tabId?: number}
-  const target = await prepareInputTab(tabId)
-  await withRef(target.tabId, ref, async (entry) => {
-    const {x, y} = await elementCenter(target.tabId, entry.backendDOMNodeId)
-    await dispatchHover(target.tabId, x, y)
-  })
-  return {}
+  const raw = parseToolParams('hover', hoverParams, params)
+  const target = await prepareInputTab(raw.tabId)
+  if (raw.ref !== undefined) {
+    const ref = raw.ref
+    return withRef(target.tabId, ref, async (entry) => {
+      const {x, y} = await locateUncovered(target.tabId, entry.backendDOMNodeId, 'hover')
+      await dispatchHover(target.tabId, x, y)
+      return {x, y}
+    })
+  }
+  if (raw.x !== undefined && raw.y !== undefined) {
+    const metrics = await getViewportMetrics(target.tabId)
+    if (raw.x < 0 || raw.y < 0 || raw.x > metrics.width || raw.y > metrics.height) {
+      throw new Error(`hover (${raw.x}, ${raw.y}) is outside the viewport (${metrics.width}x${metrics.height}); coordinates are viewport CSS pixels`)
+    }
+    await dispatchHover(target.tabId, raw.x, raw.y)
+    return {x: raw.x, y: raw.y}
+  }
+  const locator = raw.selector !== undefined ? {selector: raw.selector} : {text: raw.text ?? ''}
+  const receipt = parseScrollToReceipt(await evaluateJson<unknown>(target.tabId, buildScrollToScript(locator)))
+  if (receipt === null) {
+    const what = raw.selector !== undefined ? `selector ${JSON.stringify(raw.selector)}` : `text ${JSON.stringify(raw.text)}`
+    throw new Error(`hover: no visible element matches ${what}; wait for it to render or use probe to check it`)
+  }
+  if (!receipt.inViewport) {
+    throw new Error('hover: the element is clipped or has zero size after scrolling, so the pointer would miss it — use probe to inspect it')
+  }
+  const x = receipt.rect.x + receipt.rect.width / 2
+  const y = receipt.rect.y + receipt.rect.height / 2
+  // 与 ref 路径同一判定：中心点被遮罩/浮层盖住时指针落不到目标上
+  const occlusion = parseOcclusion(
+    await evaluateJson<unknown>(
+      target.tabId,
+      `(() => { const el = ${buildFindElementExpression(locator)}; return el ? (${buildOcclusionFn(x, y)}).call(el) : null })()`,
+    ).catch(() => null),
+  )
+  if (occlusion.kind === 'covered') {
+    throw new Error(
+      `${TOOL_ERROR_CODES.ELEMENT_COVERED}: hover sent no input — the element's center (${Math.round(x)}, ${Math.round(y)}) ` +
+        `is covered by ${occlusion.by}. Close or finish the overlay first, or hover an element inside it.`,
+    )
+  }
+  await dispatchHover(target.tabId, x, y)
+  return {x, y, ...(receipt.tag !== undefined ? {tag: receipt.tag} : {}), ...(receipt.text !== undefined ? {text: receipt.text} : {})}
 }
 
-/** 清空当前焦点元素：Ctrl+A 全选 + Delete（Monaco 与原生输入框都认）。 */
+/**
+ * 清空当前焦点元素：全选（附 selectAll 编辑命令）+ Delete。
+ * 原生输入框键盘清空后仍有残留时，走原型 value setter 兜底（React 受控组件也能收到）；
+ * 仍清不掉就显式报错，绝不把新文本追加到旧内容后面。
+ */
 async function clearFocused(tabId: number): Promise<void> {
   const selectAll = resolveKey('a')
-  if (!selectAll.ok) return
-  await dispatchKey(tabId, selectAll.info, ['ctrl'])
   const del = resolveKey('Delete')
-  if (!del.ok) return
+  if (!selectAll.ok || !del.ok) return
+  await dispatchKey(tabId, selectAll.info, [selectAllModifier(navigator.userAgent)], ['selectAll'])
   await dispatchKey(tabId, del.info, [])
+  const remaining = await readFocusedValue(tabId)
+  if (remaining === null || remaining === '') return
+  if (await clearFocusedNativeValue(tabId)) return
+  throw new Error(
+    `INPUT_NOT_LANDED: clear:true could not empty the field (still "${remaining.slice(0, 80)}") — ` +
+      'select its content with press_key and Delete, then type without clear.',
+  )
 }
 
 export const typeText: ToolHandler = async (params) => {
@@ -300,15 +392,19 @@ export const typeText: ToolHandler = async (params) => {
     mode: 'insert' | 'verbatim'
     insertedLines: number
     insertionPoint?: CursorPosition
+    value?: string
   }> => {
     const after = await readFocusSafe()
     assertLanded(after, 'after')
+    // submit 后焦点可能已离开输入框（表单提交/弹窗关闭），回读的不是目标元素，不报
+    const value = raw.submit === true ? null : await readFocusedValue(target.tabId).catch(() => null)
     return {
       mode,
       insertedLines,
       ...(after !== null && after.insertionPoint !== null
         ? {insertionPoint: after.insertionPoint}
         : {}),
+      ...(value !== null ? {value} : {}),
     }
   }
 
@@ -331,7 +427,7 @@ export const typeText: ToolHandler = async (params) => {
     throw new Error('ref is required unless focus="none"')
   }
   await withRef(target.tabId, raw.ref, async (entry) => {
-    const {x, y} = await locate(target.tabId, entry.backendDOMNodeId)
+    const {x, y} = await locateUncovered(target.tabId, entry.backendDOMNodeId, 'type')
     await dispatchClick(target.tabId, x, y)
     await prepareKeyboardPath()
     if (mode === 'verbatim') await typeVerbatim()
@@ -386,7 +482,11 @@ export const scrollTo: ToolHandler = async (params) => {
   const parsed = parseScrollToReceipt(receipt)
   if (parsed === null) {
     const what = raw.selector !== undefined ? `selector ${JSON.stringify(raw.selector)}` : `text ${JSON.stringify(raw.text)}`
-    throw new Error(`scroll_to: no visible element matches ${what}; snapshot or wait for it to render first`)
+    throw new Error(
+      `scroll_to: no visible element matches ${what}. scroll_to only searches what is rendered now: ` +
+        'if the target is on another page of a paginated table or not yet rendered by a virtual/lazy list, ' +
+        'go to that page or scroll the list (scroll with a ref inside it) first; otherwise wait for it to render.',
+    )
   }
   return parsed
 }

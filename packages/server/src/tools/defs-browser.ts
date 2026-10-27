@@ -7,7 +7,9 @@ import {
   countWaitConditions,
   getTextParams,
   getTextResult,
-  hoverParams,
+  hoverParamsError,
+  hoverParamsShape,
+  hoverResult,
   pressKeyParams,
   getHtmlParamsShape,
   getHtmlResult,
@@ -18,6 +20,8 @@ import {
   reloadResult,
   scrollToParamsShape,
   scrollToResult,
+  selectOptionParams,
+  selectOptionResult,
   waitParamsError,
   waitParamsShape,
   waitResult,
@@ -89,37 +93,53 @@ const click = defineTool({
   name: 'click',
   title: 'Click an element by ref',
   description:
-    'Click the element with the given ref from the latest snapshot. ' +
-    'When the click targets a button inside an open dialog and the dialog is still present afterwards, ' +
-    'the click is retried once via keyboard activation (focus + Enter) — dialog buttons sometimes move between measure and click. ' +
+    'Click the element with the given ref from the latest snapshot. The click is dispatched exactly once and never retried. ' +
+    'When a dialog was open before the click and is still open afterwards, the result says so — that is normal for ' +
+    'buttons that keep the dialog open (e.g. "add row"); snapshot to verify before clicking again. ' +
       'Pass snapshot: true to get a fresh full snapshot after the click (waits ~2 animation frames first); ' +
       'saves a round trip on pages that re-render and invalidate refs. For async content, use wait instead.',
   schema: clickParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'click', args, clickResult)
+    const head = `Clicked ${args.ref}${result.dialogStillOpen === true ? ' (a dialog is still open)' : ''}`
     if (result.snapshot !== undefined) {
       const s = result.snapshot
       return toolText(
-        `Clicked ${args.ref}\n\nSnapshot of ${s.url} (version ${s.version})${s.truncated ? ' — TRUNCATED' : ''}\n\n${s.snapshot}`,
+        `${head}\n\nSnapshot of ${s.url} (version ${s.version})${s.truncated ? ' — TRUNCATED' : ''}\n\n${s.snapshot}`,
       )
     }
     if (result.snapshotError !== undefined) {
-      return toolText(`Clicked ${args.ref} (snapshot failed: ${result.snapshotError}; call snapshot to continue)`)
+      return toolText(`${head} (snapshot failed: ${result.snapshotError}; call snapshot to continue)`)
     }
-    return toolText(`Clicked ${args.ref}`)
+    return toolText(head)
   },
 })
 
 const hover = defineTool({
   name: 'hover',
-  title: 'Hover an element by ref',
-  description: 'Move the mouse over the element with the given ref.',
-  schema: hoverParams.shape,
+  title: 'Hover an element',
+  description:
+    'Move the mouse over an element, e.g. to open a tooltip or a hover menu. Pass exactly one of: ref (from snapshot), ' +
+    'selector (CSS, first match — works for icon-only elements that have no ref), text (first visible element whose ' +
+    'own text contains the substring), or x+y (viewport CSS pixels). selector/text scroll the element to the viewport ' +
+    'center first. Returns the point that was hovered.',
+  // 注册无 refine 的 shape（refine 会破坏 tools/list 的 JSON schema）；四选一在 run 里校验。
+  schema: hoverParamsShape,
   async run(args, call) {
-    await callBridge(call, 'hover', args, okResult)
-    return toolText(`Hovered ${args.ref}`)
+    const invalid = hoverParamsError(args)
+    if (invalid !== undefined) throw new Error(invalid)
+    const result = await callBridge(call, 'hover', args, hoverResult)
+    const target =
+      args.ref ?? (args.selector !== undefined ? JSON.stringify(args.selector) : args.text !== undefined ? `text ${JSON.stringify(args.text)}` : '')
+    const at = result.x !== undefined && result.y !== undefined ? ` at (${round1(result.x)}, ${round1(result.y)})` : ''
+    const label = result.tag !== undefined ? ` <${result.tag}>${result.text !== undefined ? ` "${result.text}"` : ''}` : ''
+    return toolText(`Hovered${target.length > 0 ? ` ${target}` : ''}${label}${at}`)
   },
 })
+
+function round1(value: number): number {
+  return Math.round(value * 10) / 10
+}
 
 const clickAt = defineTool({
   name: 'click_at',
@@ -128,6 +148,8 @@ const clickAt = defineTool({
     'Click at raw viewport coordinates (CSS pixels). Escape hatch for targets a ref cannot reach: ' +
     'elements inside iframes/Canvas, and icon-only containers with no accessible name (e.g. a "..." menu). ' +
     'Requires coordinates:true to signal intent. ' +
+    'space:"image" means x/y were measured on this tab\'s latest screenshot; the tool converts them to CSS pixels ' +
+    'and fails if the viewport changed since that screenshot (take a new one). ' +
     'Options: button "left"|"right"|"middle" (right-click opens context menus), clickCount 2 for double-click, ' +
     'modifiers ["ctrl"|"alt"|"shift"|"meta"] for chords. ' +
     'Out-of-viewport coordinates fail with an explicit error (viewport metrics are re-measured per call). ' +
@@ -141,7 +163,11 @@ const clickAt = defineTool({
     const result = await callBridge(call, 'click_at', args, clickAtResult)
     const detail = args.button && args.button !== 'left' ? ` ${args.button}` : ''
     const count = args.clickCount && args.clickCount > 1 ? ` x${args.clickCount}` : ''
-    return toolText(`Clicked${detail}${count} at (${args.x}, ${args.y})${formatHit(result.hit)}`)
+    const where =
+      result.css !== undefined
+        ? `image (${args.x}, ${args.y}) → CSS (${result.css.x}, ${result.css.y})`
+        : `(${args.x}, ${args.y})`
+    return toolText(`Clicked${detail}${count} at ${where}${formatHit(result.hit)}`)
   },
 })
 
@@ -183,12 +209,16 @@ const type = defineTool({
     'mode:"verbatim" guarantees exact reproduction through the input pipeline: per-line insertion with newline ' +
     'handling that bypasses Monaco auto-indent and bracket auto-closing. ' +
     'submit is rejected with verbatim/set (activate the Run/Submit button by its ref instead). ' +
-    'clear:true empties the field first (focus + Ctrl+A + Delete); redundant and rejected with set. ' +
+    'submit:true presses Enter after typing — inside a form or modal this usually submits or closes it; ' +
+    'leave it off for filter fields in dialogs. ' +
+    'clear:true empties the field first (select-all — Cmd+A on macOS, Ctrl+A elsewhere — then Delete) and fails with ' +
+    'INPUT_NOT_LANDED instead of appending if content remains; redundant and rejected with set. ' +
     'focus:"none" skips the implicit click: with ref it only DOM.focuses the element (caret stays put); ' +
     'without ref it types into whatever is focused. ' +
     'Landing is verified: when focus is not on an editable element the call fails with INPUT_NOT_LANDED ' +
     'instead of silently discarding the text. Returns the caret landing point insertionPoint {line, col} ' +
-    '(1-based) and insertedLines for self-checking where the text landed.',
+    '(1-based) and insertedLines for self-checking where the text landed, plus the field\'s resulting value ' +
+    '(native inputs/textareas/contenteditable; omitted for Monaco and after submit).',
   schema: typeParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'type', args, typeResult)
@@ -203,8 +233,9 @@ const type = defineTool({
     }
     if (result.layoutRecovered === true) bits.push('layout recovered')
     const suffix = bits.length > 0 ? ` (${bits.join(', ')})` : ''
+    const value = result.value !== undefined ? `\nValue now: ${JSON.stringify(result.value)}` : ''
     return toolText(
-      `Typed into ${args.ref ?? 'focused element'}${suffix}${args.submit ? ' and pressed Enter' : ''}`,
+      `Typed into ${args.ref ?? 'focused element'}${suffix}${args.submit ? ' and pressed Enter' : ''}${value}`,
     )
   },
 })
@@ -262,23 +293,44 @@ const screenshot = defineTool({
   name: 'screenshot',
   title: 'Capture a screenshot',
   description:
-    'Capture a PNG screenshot of the visible viewport. The image is scaled so 1 image pixel = 1 CSS pixel, ' +
-    'so coordinates measured on it can be passed to click_at directly; the text part reports width/height/dpr.',
+    'Capture a PNG screenshot of the visible viewport. Wide viewports are downscaled (long edge <= 1568 px) so the ' +
+    'host never resizes the image again; the text part reports the image size and its ratio to CSS pixels. ' +
+    'To click a point measured on the image, pass it to click_at with space:"image" — the tool converts it to CSS ' +
+    'pixels using this tab\'s latest screenshot.',
   schema: screenshotParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'screenshot', args, screenshotResult)
     const image = toolImage(result.data, result.mimeType)
     if (result.width === undefined || result.height === undefined) return image
-    return [...image, ...toolText(describeScreenshotPixels(result.width, result.height, result.dpr ?? 1, result.scale ?? 1))]
+    return [...image, ...toolText(describeScreenshotPixels(result))]
   },
 })
 
+/** 保留两位小数，比例只给人读。 */
+function ratio(value: number): string {
+  return String(Math.round(value * 100) / 100)
+}
+
 /**
- * 截图像素与 click_at 坐标的换算说明。缩放失败时扩展回传原图（scale=1、dpr>1）：
- * 此时图片是设备像素，必须如实告知除以 dpr，否则模型量到的坐标会差 dpr 倍。
+ * 截图像素与 click_at 坐标的换算说明。新扩展回传 imageWidth/cssScale，直接如实报比例；
+ * 旧扩展只有 scale（图片/设备像素），按旧规则推断。
  */
-export function describeScreenshotPixels(width: number, height: number, dpr: number, scale: number): string {
+export function describeScreenshotPixels(result: z.infer<typeof screenshotResult>): string {
+  const width = result.width ?? 0
+  const height = result.height ?? 0
+  const dpr = result.dpr ?? 1
   const viewport = `Viewport ${width}x${height} CSS px, dpr ${dpr}`
+  if (result.imageWidth !== undefined && result.imageHeight !== undefined && result.cssScale !== undefined) {
+    const image = `image ${result.imageWidth}x${result.imageHeight}`
+    if (Math.abs(result.cssScale - 1) < 0.005) {
+      return `${viewport}; ${image} — image px = CSS px, use these coordinates with click_at directly.`
+    }
+    return (
+      `${viewport}; ${image} — 1 image px = ${ratio(1 / result.cssScale)} CSS px. ` +
+      'Pass coordinates measured on this image to click_at with space:"image".'
+    )
+  }
+  const scale = result.scale ?? 1
   if (scale !== 1) return `${viewport}; image px = CSS px (downscaled from dpr ${dpr}) — use these coordinates with click_at.`
   if (dpr === 1) return `${viewport}; image px = CSS px — use these coordinates with click_at.`
   return (
@@ -291,12 +343,14 @@ const wait = defineTool({
   name: 'wait',
   title: 'Wait for a condition',
   description:
-    'Wait until a condition holds on the page: text appears in the body, a CSS selector matches, the URL contains a substring, ' +
+    'Wait until a condition holds on the page: text appears in the body, a CSS selector matches (use this before ' +
+    'evaluate_script after a re-render so the DOM you read exists), the URL contains a substring, ' +
     'or editorRendered:true (a Monaco-style editor exists with height > 40px, width > 200px and a non-empty ' +
     'visible view-line — resize-collapsed editors are auto-recovered via monaco layout(); guards against both ' +
     'collapsed/hidden instances and 5x5 narrow-strip false readiness after window resizes), ' +
     'or networkIdle:true (no new network request for 500ms — e.g. after a click that triggers async fetches). ' +
-    'At most one condition per call; pass only timeoutMs for a plain delay (prefer a real condition when one exists). ' +
+    'At most one condition per call. To sleep, pass ONLY timeoutMs (e.g. {timeoutMs: 1000}, max 30000) — no dummy ' +
+    'text condition needed; prefer a real condition when one exists. ' +
     'Returns {matched, timedOut} — a timeout is not an error; snapshot afterwards to see the current state.',
   // 注册无 refine 的 shape（refine 会破坏 tools/list 的 JSON schema）；条件约束在 run 里落地。
   schema: waitParamsShape,
@@ -399,6 +453,24 @@ const reload = defineTool({
   },
 })
 
+const selectOption = defineTool({
+  name: 'select_option',
+  title: 'Choose an option in a dropdown',
+  description:
+    'Choose a dropdown option by its visible text. ref is the select trigger from snapshot: a native <select>, or the ' +
+    'selector box of a custom dropdown (antd / Element / ARIA combobox). Native selects are set directly. Custom ' +
+    'dropdowns are opened (unless already open), the matching visible option is clicked once with a real mouse event, ' +
+    'and the trigger\'s displayed value is read back. Exact text matches win over substring matches; disabled options ' +
+    'are refused. search:true types text into the dropdown\'s search box first — use it for long or virtualized lists ' +
+    'whose target option is not rendered yet. On failure the error lists the options that were visible.',
+  schema: selectOptionParams.shape,
+  async run(args, call) {
+    const result = await callBridge(call, 'select_option', args, selectOptionResult)
+    const value = result.value !== undefined ? `; field now shows ${JSON.stringify(result.value)}` : ''
+    return toolText(`Selected ${JSON.stringify(result.selected)} in ${args.ref} (${result.kind} select)${value}`)
+  },
+})
+
 export const BROWSER_TOOL_DEFS: readonly ToolDef[] = [
   navigate,
   wait,
@@ -406,6 +478,7 @@ export const BROWSER_TOOL_DEFS: readonly ToolDef[] = [
   click,
   clickAt,
   hover,
+  selectOption,
   type,
   pressKey,
   getText,

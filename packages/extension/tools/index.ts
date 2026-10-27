@@ -10,6 +10,7 @@ import {invoke, register} from './registry'
 import {reloadExtension} from './reload-extension'
 import {requestPermission} from './request-permission'
 import {screenshot} from './screenshot'
+import {selectOption} from './select-option'
 import {navigate, reload, snapshot} from './snapshot'
 import {ensureTab, tabClose, tabList, tabNew, tabSelect, takeoverTab} from './tabs'
 import {wait} from './wait'
@@ -49,3 +50,4 @@ register('reload_extension', reloadExtension)
 register('probe', probe)
 register('get_html', getHtml)
 register('wait_for_response', waitForResponse)
+register('select_option', selectOption)

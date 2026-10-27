@@ -15,8 +15,8 @@ Claude-in-Chrome 风格的开源浏览器 MCP：通过 Chrome 扩展，让支持
 
 ## 功能概览
 
-- **看页面**：读取可访问性树快照、元素文本和截图（像素与 CSS 坐标一致），使用带版本的 ref 定位元素；`probe` / `get_html` 只读探查单个元素的状态与 outerHTML。
-- **操作页面**：导航、刷新（可绕过缓存）、点击、悬停、滚动或滚动到指定元素、文本输入和快捷键；iframe / Canvas 等无法通过 ref 命中的目标可用坐标点击，并回报落点元素。
+- **看页面**：读取可访问性树快照、元素文本和截图（回报图片与 CSS 像素的实际比例，可按截图坐标点击），使用带版本的 ref 定位元素；`probe` / `get_html` 只读探查单个元素的状态与 outerHTML。
+- **操作页面**：导航、刷新（可绕过缓存）、点击、悬停（ref / CSS 选择器 / 文本 / 坐标）、下拉选择、滚动或滚动到指定元素、文本输入和快捷键；iframe / Canvas 等无法通过 ref 命中的目标可用坐标点击，并回报落点元素。
 - **编辑代码**：支持保留多行缩进的输入，以及通过页面暴露的 Monaco API 全量写入编辑器；包含键盘通路检测和编辑器塌缩恢复。
 - **管理标签页**：创建、切换、关闭标签页，或显式接管已有标签页；操作限定在 "Chrome in Harness" 受管组内。
 - **标签页会话**：`ensure_tab` 提供可复用的标签句柄——每个 agent 固定用自己的标签，标签被关自动补建，避免标签越开越多。
@@ -71,7 +71,7 @@ Chrome 扩展 · MV3 service worker / WXT
 
 ## 工具与行为细节
 
-**工具集**（30 个）：`ping`、`reload_extension`、`navigate`、`reload`、`snapshot`、`click`、`click_at`、`hover`、`type`、`press_key`、`get_text`、`probe`、`get_html`、`wait_for_response`、`scroll`、`scroll_to`、`screenshot`、`tab_list`、`tab_new`、`ensure_tab`、`tab_select`、`tab_close`、`takeover_tab`、`run_actions`、`read_console`、`read_network`、`wait`、`add_allowlist_domain`、`evaluate_script`、`request_permission`。
+**工具集**（31 个）：`ping`、`reload_extension`、`navigate`、`reload`、`snapshot`、`click`、`click_at`、`hover`、`type`、`press_key`、`get_text`、`probe`、`get_html`、`select_option`、`wait_for_response`、`scroll`、`scroll_to`、`screenshot`、`tab_list`、`tab_new`、`ensure_tab`、`tab_select`、`tab_close`、`takeover_tab`、`run_actions`、`read_console`、`read_network`、`wait`、`add_allowlist_domain`、`evaluate_script`、`request_permission`。
 
 - **read_console / read_network**：CDP 采集的 console 与网络请求元数据（含耗时与细分失败原因；响应体与请求头不采集，`data:` URL 不记录）。缓冲从 tab 首次被工具 attach 起积累
 - **wait_for_response**：等 URL 含指定子串（可加 status / method）的请求完成，只看元数据；默认回看 2s，「先点击再等待」无竞态
@@ -80,9 +80,9 @@ Chrome 扩展 · MV3 service worker / WXT
 - **reload_extension**：仅开发态——从磁盘重新加载解压扩展（等同 `chrome://extensions` 点 ↻）并等待重连，代理可自行「构建 → 重载 → 验证」扩展代码；商店安装版本直接拒绝。不刷新工具 schema：改了工具参数还需重启 server 并让客户端重新拉取工具列表（见下文「MCP 升级后」）
 - **scroll_to**：按 ref / CSS selector / 可见文本（三选一）把元素滚到视口中央，回执滚动后的视口 rect 与 `inViewport`
 - **reload**：重新加载当前页并按 navigate 同款策略等待；`hard:true` 绕过 HTTP 缓存（验证部署，免去加随机 query 污染路由）；旧 ref 全部失效
-- **screenshot**：按 1/dpr 缩放输出，图片像素 = 视口 CSS 像素，量到的坐标可直接给 `click_at`；附带 `width/height/dpr` 文本。缩放不可用时返回原图，文本会提示把坐标除以 dpr
+- **screenshot**：按标准档图片规则缩放（长边 ≤ 1568、视觉 token ≤ 1568），宿主不会再二次缩放；文本回报视口尺寸、dpr、图片尺寸与「1 图片像素 = N CSS 像素」。在图上量到的坐标用 `click_at({space: "image"})` 传入，由扩展换算
 - **add_allowlist_domain**：显式扩白名单（无确认窗口，直接生效）。一般无需手动调用——访问新域名会自动弹确认窗口
-- **evaluate_script**：受限 `Runtime.evaluate` 执行页面上下文 JS。黑名单拒绝网络访问（fetch/XHR/WebSocket/sendBeacon）、eval/Function、导航（location/window.open）、document.write、debugger 与 `chrome.*`；`awaitPromise:true` 需 async IIFE；结果 JSON 序列化超限截断；以用户手势执行，脚本内 `element.click()` 触发的页面 `window.open` 不会被弹窗拦截
+- **evaluate_script**：受限 `Runtime.evaluate` 执行页面上下文 JS。脚本可以改页面（DOM 写入、`element.click()` 均允许），黑名单只拒绝网络访问（fetch/XHR/WebSocket/sendBeacon）、eval/Function、导航（location/window.open）、document.write、debugger 与 `chrome.*`；可用 `!`/`~`/`+`/`-` 开头的表达式；`awaitPromise:true` 需 async IIFE；结果文本就是 JSON 值（字符串带引号），可直接 `JSON.parse`，超限截断时另起一行标 `[TRUNCATED]`；以用户手势执行，脚本内 `element.click()` 触发的页面 `window.open` 不会被弹窗拦截
 - **request_permission**：针对域名发起 `chrome.permissions.request` 原生授权弹窗，授予后同步写入 storage 白名单。仅当用户明确要求时调用
 - **takeover_tab**：把已打开、未受管的用户 tab 收编进受管组（`tab_list` 标 `[managed:<groupId>]` 便于识别），对已受管的 tab 是空操作；仅在用户明确要求在该 tab 工作时调用，URL 必须已在白名单。不激活、不聚焦、不导航、不跨窗口搬 tab（只并入同窗口的受管组，否则在该窗口新建）；tab 在用户自建的其他分组里时拒绝并报 `TAB_IN_USER_GROUP`，不拆用户分组；接管的是用户正在看的页时结果会注明，提醒后续操作对用户可见
 - **ensure_tab / run_actions**：见下文[标签页使用约定](#标签页使用约定)与[批量执行](#批量执行)
@@ -90,11 +90,13 @@ Chrome 扩展 · MV3 service worker / WXT
 - **snapshot**：`chrome.debugger` + CDP `Accessibility.getFullAXTree`，渲染成 Playwright ariaSnapshot 风格的缩进文本，交互元素带 `[ref=eN-<token>]`；优先用 ref 交互，减少选择器漂移。坐标点击、当前焦点输入等场景可不使用 ref
 - **快照降噪**：不输出 `InlineTextBox`、与父节点同名的 `StaticText`、图标字体字形；自定义可点控件（cursor:pointer / onclick 的 div/li/span）标 `[weak]` 并给 ref，但包着真实控件（如 antd 下拉外的两层 div）的无名包装层不给。`limit` 是**输出字符预算**（默认 60000）而非节点数；预算不够时先隐藏纯文本子树保住 ref，末尾提示说明丢了什么并给出建议的重试 `limit`
 - **ref 生命周期**：ref 绑定 tab 的最近一次快照，格式 `e<N>-<token>`（token 编码 worker 代 + 快照版本）；导航/关 tab/debugger 分离即失效；跨 worker 代或过期一律显式 `STALE_REF`（拒绝静默错点）；同代快照更替时交互工具按元素身份自动重试一次；SW 被杀后报 `NO_SNAPSHOT` 引导重新 snapshot
-- **click snapshot**：`click({ref, snapshot: true})` 点击后等两帧渲染（后台 tab 上限 300ms）再返回新快照，适合点击即重渲染、旧 ref 全部失效的页面，省一次 `snapshot` 往返；异步取数后才渲染的内容仍应先 `wait`。点击已生效但取快照失败时只提示失败、不报错，避免误重点
-- **click_at**：ref 命中不了时（iframe/Canvas/icon-only 容器）的坐标点击兜底，视口 CSS 像素，越界显式报错；点击前 hit-test，回执落点元素与最近可交互祖先（可区分坐标偏移 / 被遮挡 / handler 无反应）
+- **click snapshot**：`click({ref, snapshot: true})` 点击后等两帧渲染（后台 tab 上限 300ms）再返回新快照，适合点击即重渲染、旧 ref 全部失效的页面，省一次 `snapshot` 往返；异步取数后才渲染的内容仍应先 `wait`。点击已生效但取快照失败时只提示失败、不报错，避免误重点。点击前检查目标中心点是否被遮罩或浮层盖住，被盖住就报 `ELEMENT_COVERED` 不点（避免点到 Modal 遮罩把弹窗关掉）；点击只派发一次、从不自动重试；点击前后都有打开的对话框时结果标注 `dialog is still open`
+- **click_at**：ref 命中不了时（iframe/Canvas/icon-only 容器）的坐标点击兜底，默认视口 CSS 像素；`space: "image"` 时按该 tab 最近一次截图换算，截图后视口变过或坐标超出图片会显式报错；越界显式报错；点击前 hit-test，回执落点元素与最近可交互祖先（可区分坐标偏移 / 被遮挡 / handler 无反应）
 - **press_key**：单键/组合键（`ctrl`/`alt`/`shift`/`meta` + 键名，支持 F1-F24），可选先 focus 指定 ref；派发前有默认动作探针——临时离屏输入框验证按键真的产生字符插入（监听器探针检测不出「事件送达但默认动作被丢弃」的假活，resize/失焦后的典型死法），死了自动重开焦点仿真/激活自愈，仍死显式报 `KEY_PIPELINE_DEAD`
 - **get_text**：优先读 AX value（虚拟滚动编辑器全文唯一可靠读数），innerText 兜底，上限 8KB
-- **type**：`mode="insert"`（默认）/ `mode="verbatim"`（Monaco 类编辑器逐行 insertText 还原缩进，无 trim）/ `mode="set"`（monaco `setValue` 原子写整个缓冲——绕开键盘/焦点/IME 通路，窗口失焦、键路死亡、编辑器塌缩都不影响；ref 可省，单编辑器页面自动选中）；焦点不在可编辑元素时显式报 `INPUT_NOT_LANDED` 而非静默假成功；返回插入点概要 `{line, col}` 供模型自查
+- **select_option**：按可见文本选择下拉项，`ref` 指向原生 `<select>` 或自定义下拉（antd / Element / ARIA combobox）的选择框。原生 select 直接设值；自定义下拉点开后用真实鼠标点一次匹配项，再回读选择框显示的值。精确匹配优先于包含匹配，禁用项拒绝；`search:true` 先在搜索框输入文本过滤，用于虚拟列表里未渲染的项；找不到时报错列出当前可见选项
+- **hover**：`ref` / `selector` / `text` / `x+y` 四选一，selector 适合 snapshot 里没有 ref 的纯图标元素（如 tooltip 触发器）
+- **type**：`mode="insert"`（默认）/ `mode="verbatim"`（Monaco 类编辑器逐行 insertText 还原缩进，无 trim）/ `mode="set"`（monaco `setValue` 原子写整个缓冲——绕开键盘/焦点/IME 通路，窗口失焦、键路死亡、编辑器塌缩都不影响；ref 可省，单编辑器页面自动选中）；焦点不在可编辑元素时显式报 `INPUT_NOT_LANDED` 而非静默假成功；`clear:true` 用全选（macOS Cmd+A，其余 Ctrl+A）+ Delete 清空，清不掉时报错而不追加；返回插入点概要 `{line, col}` 和输入后的实际值供模型自查
 - **wait editorRendered**：Monaco 渲染完成 = 高度 > 40px 且宽度 > 200px 且有非空 view-line——resize 后塌缩成 5×5 窄条的假就绪不再放过；检测到塌缩自动按父容器尺寸强制 `layout()` 重排救回（无参 layout 会按自身窄宽度自我维持，必须显式传维度）
 - **输入路径**：常规点击与输入通过 CDP `Input.*` 派发浏览器事件；`type mode="set"` 则直接调用 Monaco API，不模拟逐键输入。不保证网站将自动化操作视为人工操作
 - **域名白名单 + 运行时确认**：`chrome.storage.local` 持久化，扩展侧在 attach 前校验，空名单 = 拒绝全部；规则 `example.com` 匹配自身与任意深度子域。访问未授权域名时**自动弹出确认窗口**（显示域名与来源 URL，允许/拒绝），工具即时返回 `DOMAIN_CONFIRMATION_REQUIRED`（非阻塞），用户点「允许」后重试即通过——无需手动改配置
@@ -211,7 +213,7 @@ npx @chrome-in-harness/launcher service uninstall  # 停止并移除
 ### 标签页使用约定
 
 agent 应优先使用 `ensure_tab`，保存返回的 `{tabId, url, reused}`，后续操作始终显式传入自己的 `tabId`。
-再次调用 `ensure_tab({tabId, url?})` 时，原标签存在且仍受管则复用，不导航、不切前台；已关闭时后台补建并返回新 ID。
+再次调用 `ensure_tab({tabId, url?})` 时，原标签存在且仍受管则复用，不导航、不切前台；已关闭时后台补建并返回新 ID，结果带 `replacedTabId`（原 ID）和一句提醒改存新 ID 的说明；标签仍在但已移出受管组时报 `TAB_NOT_MANAGED`，不会擅自替换，可改为不带 `tabId` 调用拿一个新标签。
 `url` 仅用于创建，复用后需要换页面应调用 `navigate`；不传 `url` 时新标签开在 `about:blank`。标签被用户移出受管组会报错，不自动接管或补建。
 不同 agent 各自维护标签 ID，只有明确需要多标签时才使用 `tab_new`；服务不提供 agent 身份识别或独占锁。
 
@@ -233,6 +235,7 @@ agent 应优先使用 `ensure_tab`，保存返回的 `{tabId, url, reused}`，�
 | `DOMAIN_CONFIRMATION_REQUIRED` | 已弹出域名确认窗口，等用户点「允许」后重试 |
 | `TAB_NOT_MANAGED` / `TAB_CLOSED` / `TAB_IN_USER_GROUP` | 标签不在受管组 / 已关闭 / 在用户自建分组里（`takeover_tab` 不会拆它） |
 | `STALE_REF` / `NO_SNAPSHOT` | ref 过期或扩展重启过，重新 snapshot |
+| `ELEMENT_COVERED` | 目标中心点被遮罩或浮层盖住，`click` / `type` / `hover` / `select_option` 没有派发输入；先关掉遮挡层，或改操作遮挡层里的元素 |
 | `EXTENSION_DISCONNECTED` | 扩展未连接；刚断开时多半在重连，稍等几秒重试 |
 | `TOOL_TIMEOUT` | 扩展超时未回包：页面卡住、有弹窗挡住，或 DevTools 占用了 debugger |
 | `DEBUGGER_BUSY` | 该标签已打开 DevTools，关掉后重试 |

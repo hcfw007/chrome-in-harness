@@ -77,7 +77,9 @@ const ensureTab = defineTool({
   schema: ensureTabParams.shape,
   async run(args, call) {
     const result = await callBridge(call, 'ensure_tab', args, ensureTabResult)
-    return toolText(JSON.stringify(result))
+    if (result.replacedTabId === undefined) return toolText(JSON.stringify(result))
+    const note = `tab ${result.replacedTabId} was closed; opened tab ${result.tabId} instead. Use tabId ${result.tabId} from now on.`
+    return toolText(JSON.stringify({...result, note}))
   },
 })
 

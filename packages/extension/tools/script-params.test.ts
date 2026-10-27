@@ -33,6 +33,7 @@ vi.mock('./ref-recovery', () => ({
 vi.mock('./snapshot', () => ({snapshot: async () => ({})}))
 
 const {clickAt, scrollTo} = await import('./interact.js')
+const {forgetScreenshot, rememberScreenshot} = await import('../lib/screenshot-geometry.js')
 const {getHtml, probe} = await import('./inspect.js')
 const {buildWaitScript, wait} = await import('./wait.js')
 
@@ -66,6 +67,20 @@ describe('handlers reject non-numeric params before building page scripts', () =
     await clickAt({x: 10, y: 20, coordinates: true})
     expect(evaluateJson.mock.calls[0]?.[1]).toContain('document.elementFromPoint(10, 20)')
     expect(dispatchClick).toHaveBeenCalledTimes(1)
+  })
+
+  test('click_at space:"image" converts with the last screenshot of the tab', async () => {
+    rememberScreenshot(1, {cssWidth: 800, cssHeight: 600, imageWidth: 400, imageHeight: 300})
+    await expect(clickAt({x: 100, y: 50, coordinates: true, space: 'image'})).resolves.toMatchObject({
+      css: {x: 200, y: 100},
+    })
+    expect(dispatchClick.mock.calls[0]?.slice(1, 3)).toEqual([200, 100])
+  })
+
+  test('click_at space:"image" refuses without a screenshot and never clicks', async () => {
+    forgetScreenshot(1)
+    await expect(clickAt({x: 1, y: 1, coordinates: true, space: 'image'})).rejects.toThrow(/call screenshot first/)
+    expect(dispatchClick).not.toHaveBeenCalled()
   })
 
   test('get_html with a string maxChars is rejected (selector and ref modes)', async () => {

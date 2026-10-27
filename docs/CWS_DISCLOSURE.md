@@ -10,13 +10,13 @@ that powers:
 
 - `snapshot` — reading the accessibility tree (`Accessibility.getFullAXTree`) plus a
   read-only DOM pass that finds clickable custom controls (`DOM.getDocument`, `Runtime.evaluate`)
-- `click` / `click_at` / `hover` / `type` / `scroll` — dispatching trusted input events (`Input.*`);
+- `click` / `click_at` / `hover` / `type` / `scroll` / `select_option` — dispatching trusted input events (`Input.*`);
   `click_at` first reads which element sits under the point, read-only
 - `scroll_to` — scrolling one element into the center of the viewport
 - `probe` / `get_html` — read-only inspection of one element: existence, visibility, position,
   text, a fixed allowlist of attributes, or its outerHTML (truncated to a bounded size)
 - `screenshot` — capturing the viewport (`Page.captureScreenshot`), downscaled locally to
-  CSS pixels
+  at most 1568 px on the long edge
 - `navigate` / `reload` — loading a URL or reloading the current page (`Page.navigate`,
   `Page.reload`, optionally bypassing the HTTP cache)
 - `read_console` / `read_network` / `wait_for_response` — capturing console output and network
