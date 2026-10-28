@@ -44,6 +44,9 @@ export const TOOL_ERROR_CODES = {
 
 export type ToolErrorCode = (typeof TOOL_ERROR_CODES)[keyof typeof TOOL_ERROR_CODES]
 
+/** evaluate_script 结果字符上限：字符串与对象 JSON 共用。 */
+export const MAX_EVALUATE_CHARS = 200_000
+
 /** 快照文本默认字符上限（与 extension 的 MAX_CHARS 保持一致）。 */
 export const MAX_SNAPSHOT_CHARS = 60_000
 
@@ -443,6 +446,8 @@ export const evaluateScriptResult = z.object({
   value: z.unknown(),
   type: z.string(),
   truncated: z.boolean(),
+  /** 截断时的原始字符数（字符串为原文长度，对象为 JSON 长度）。 */
+  originalLength: z.number().int().min(0).optional(),
 })
 
 export const requestPermissionParams = z.object({

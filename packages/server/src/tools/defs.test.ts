@@ -601,6 +601,12 @@ describe('evaluate defs', () => {
     expect(content).toEqual([{type: 'text', text: '{"a":1}\n[TRUNCATED]'}])
   })
 
+  test('evaluate_script reports kept and original length when truncated', async () => {
+    const fake = fakeBridge({value: 'abc…', type: 'string', truncated: true, originalLength: 9000})
+    const content = await run(byName('evaluate_script'), {expression: 's'}, fake.call)
+    expect(content).toEqual([{type: 'text', text: '"abc…"\n[TRUNCATED: kept 3 of 9000 chars]'}])
+  })
+
   test('evaluate_script output parses as JSON for strings, numbers and booleans', async () => {
     const cases: Array<[unknown, string, unknown]> = [
       ['he said "hi"', 'string', 'he said "hi"'],
