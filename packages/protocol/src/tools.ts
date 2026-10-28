@@ -173,6 +173,8 @@ export const typeResult = z.object({
   value: z.string().optional(),
   /** 焦点在跨域 iframe 内，落盘无法验证（文本已发出，但没有读回确认）。 */
   unverified: z.literal(true).optional(),
+  /** 焦点在 iframe 内时实际落点（iframe 路径 + 标题 + URL），供核对多终端页面是否投错目标。 */
+  frame: z.string().optional(),
 })
 
 export const getTextParams = z.object({

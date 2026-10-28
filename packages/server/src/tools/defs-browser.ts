@@ -213,8 +213,13 @@ const type = defineTool({
     'leave it off for filter fields in dialogs. ' +
     'clear:true empties the field first (select-all — Cmd+A on macOS, Ctrl+A elsewhere — then Delete) and fails with ' +
     'INPUT_NOT_LANDED instead of appending if content remains; redundant and rejected with set. ' +
-    'focus:"none" skips the implicit click: with ref it only DOM.focuses the element (caret stays put); ' +
-    'without ref it types into whatever is focused. ' +
+    'focus:"none" skips the implicit click: with ref it only DOM.focuses the element (caret stays put) and fails ' +
+    'with INPUT_NOT_LANDED, typing nothing, if the ref did not actually get focus (e.g. it sits in a hidden iframe); ' +
+    'without ref it types into whatever is focused. Focus set by script inside a hidden iframe silently stays ' +
+    'where it was, so on pages with several iframes (multi-session web terminals) make the target visible first and ' +
+    'check the reported "Landed in frame" line (iframe index, title, URL) before trusting the result. ' +
+    'For web terminals a successful result only means the browser accepted the keystrokes; ' +
+    'it does not prove the remote session is connected or ran the command — read the output back. ' +
     'Landing is verified: when focus is not on an editable element the call fails with INPUT_NOT_LANDED ' +
     'instead of silently discarding the text. Focus inside same-origin iframes (e.g. web terminals) is followed ' +
     'to the inner element; inside a cross-origin iframe it cannot be read, so the text is sent and the result is ' +
@@ -242,8 +247,9 @@ const type = defineTool({
       result.unverified === true
         ? '\nUnverified: focus is inside a cross-origin iframe, so landing could not be checked — confirm with a screenshot.'
         : ''
+    const frame = result.frame !== undefined ? `\nLanded in frame: ${result.frame}` : ''
     return toolText(
-      `Typed into ${args.ref ?? 'focused element'}${suffix}${args.submit ? ' and pressed Enter' : ''}${value}${unverified}`,
+      `Typed into ${args.ref ?? 'focused element'}${suffix}${args.submit ? ' and pressed Enter' : ''}${frame}${value}${unverified}`,
     )
   },
 })

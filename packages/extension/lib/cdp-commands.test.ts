@@ -9,8 +9,15 @@ vi.mock('./cdp', () => ({
 }))
 
 const {send} = await import('./cdp.js')
-const {activateTab, ensureFocusEmulation, forgetDomains, probeKeyPipeline, readFocusedValue, readInputFocus} =
-  await import('./cdp-commands.js')
+const {
+  activateTab,
+  ensureFocusEmulation,
+  forgetDomains,
+  isNodeDeepFocused,
+  probeKeyPipeline,
+  readFocusedValue,
+  readInputFocus,
+} = await import('./cdp-commands.js')
 const sendMock = vi.mocked(send)
 
 /** 最小 chrome.tabs / chrome.windows 桩，记录调用并支持注入行为。 */
@@ -215,6 +222,21 @@ describe('焦点读取下钻 iframe', () => {
     await expect(readInputFocus(1)).resolves.toMatchObject({crossOrigin: true})
   })
 
+  test('落点描述：iframe 序号 + 标题 + URL，供核对多终端是否投错', async () => {
+    const inner = {activeElement: textarea(''), defaultView: {}, title: 'runner-4', location: {href: 'https://js/koko/4'}}
+    const other = {tagName: 'IFRAME'}
+    const frame: Record<string, unknown> = {tagName: 'IFRAME', contentDocument: inner, title: '', getAttribute: () => null}
+    const top = {activeElement: frame, getElementsByTagName: () => [other, frame]}
+    frame['ownerDocument'] = top
+    runAgainst(top)
+    await expect(readInputFocus(1)).resolves.toMatchObject({frame: 'iframe[1] "runner-4" https://js/koko/4'})
+  })
+
+  test('顶层文档焦点：frame 为 null', async () => {
+    runAgainst({activeElement: textarea('')})
+    await expect(readInputFocus(1)).resolves.toMatchObject({frame: null})
+  })
+
   test('iframe 内无焦点元素：停在 iframe 上，按不可编辑报告', async () => {
     runAgainst({activeElement: {tagName: 'IFRAME', contentDocument: {activeElement: null}}})
     await expect(readInputFocus(1)).resolves.toMatchObject({tag: 'iframe', editable: false, crossOrigin: false})
@@ -257,5 +279,55 @@ describe('probeKeyPipeline 还原 iframe 内焦点', () => {
     })
     await expect(probeKeyPipeline(1)).resolves.toBe(true)
     expect(focused).toEqual(['inner-textarea'])
+  })
+})
+
+describe('isNodeDeepFocused（多 iframe 终端防误投）', () => {
+  /** 用 this 绑定真实执行 callFunctionOn 的函数，节点即假 DOM 对象。 */
+  function runOn(node: unknown): void {
+    sendMock.mockImplementation(async (_tabId: number, method: string, params?: Record<string, unknown>) => {
+      if (method === 'DOM.resolveNode') return {object: {objectId: 'obj'}}
+      if (method !== 'Runtime.callFunctionOn') return {}
+      const fn = new Function(`return (${String(params?.['functionDeclaration'])})`)() as (this: unknown) => unknown
+      return {result: {value: fn.call(node)}}
+    })
+  }
+
+  /** 顶层文档里两个终端 iframe，active 指定顶层焦点所在的那个。 */
+  function twoTerminals(active: 'a' | 'b') {
+    const top: Record<string, unknown> = {defaultView: {frameElement: null}}
+    const makeFrame = () => {
+      const frame: Record<string, unknown> = {ownerDocument: top}
+      const doc: Record<string, unknown> = {defaultView: {frameElement: frame}}
+      const input: Record<string, unknown> = {ownerDocument: doc}
+      doc['activeElement'] = input
+      return {frame, input}
+    }
+    const a = makeFrame()
+    const b = makeFrame()
+    top['activeElement'] = active === 'a' ? a.frame : b.frame
+    return {a, b}
+  }
+
+  beforeEach(() => {
+    sendMock.mockReset()
+  })
+
+  test('目标 iframe 是顶层焦点：通过', async () => {
+    const {a} = twoTerminals('a')
+    runOn(a.input)
+    await expect(isNodeDeepFocused(1, 7)).resolves.toBe(true)
+  })
+
+  test('目标在隐藏 iframe，焦点仍在另一终端：拒绝', async () => {
+    const {a} = twoTerminals('b')
+    runOn(a.input)
+    await expect(isNodeDeepFocused(1, 7)).resolves.toBe(false)
+  })
+
+  test('元素自身不是所在文档的 activeElement：拒绝', async () => {
+    const doc: Record<string, unknown> = {defaultView: {frameElement: null}, activeElement: null}
+    runOn({ownerDocument: doc})
+    await expect(isNodeDeepFocused(1, 7)).resolves.toBe(false)
   })
 })

@@ -14,6 +14,7 @@ import {
   ensureKeyPipelineAlive,
   evaluateJson,
   focusNode,
+  isNodeDeepFocused,
   getViewportMetrics,
   insertText,
   monacoSetValue,
@@ -347,8 +348,10 @@ export const typeText: ToolHandler = async (params) => {
         : 'text did not land — focus left the editable during typing; re-click the target and verify with get_text.'
     throw new Error(`INPUT_NOT_LANDED: focus is on <${state.tag}> — ${hint}`)
   }
+  let before: FocusState | null = null
   const prepareKeyboardPath = async (): Promise<void> => {
-    assertLanded(await readFocusSafe(), 'before')
+    before = await readFocusSafe()
+    assertLanded(before, 'before')
     if (mode === 'verbatim' || raw.clear === true || raw.submit === true) {
       await ensureKeyPipelineAlive(target.tabId)
     }
@@ -395,9 +398,11 @@ export const typeText: ToolHandler = async (params) => {
     insertionPoint?: CursorPosition
     value?: string
     unverified?: true
+    frame?: string
   }> => {
     const after = await readFocusSafe()
     assertLanded(after, 'after')
+    const landedFrame = (before as FocusState | null)?.frame ?? after?.frame ?? null
     // submit 后焦点可能已离开输入框（表单提交/弹窗关闭），回读的不是目标元素，不报
     const value = raw.submit === true ? null : await readFocusedValue(target.tabId).catch(() => null)
     return {
@@ -408,6 +413,8 @@ export const typeText: ToolHandler = async (params) => {
         ? {insertionPoint: after.insertionPoint}
         : {}),
       ...(value !== null ? {value} : {}),
+      // 落点取输入前的焦点：submit 后焦点可能已移走
+      ...(landedFrame !== null ? {frame: landedFrame} : {}),
     }
   }
 
@@ -418,6 +425,13 @@ export const typeText: ToolHandler = async (params) => {
       await withRef(target.tabId, raw.ref, async (entry) => {
         await scrollIntoViewIfNeeded(target.tabId, entry.backendDOMNodeId)
         await focusNode(target.tabId, entry.backendDOMNodeId)
+        // 隐藏 iframe 内的元素 DOM.focus 不报错却拿不到焦点，焦点留在别的终端：必须拒绝，不能误投
+        if (!(await isNodeDeepFocused(target.tabId, entry.backendDOMNodeId))) {
+          throw new Error(
+            `INPUT_NOT_LANDED: ${raw.ref} did not receive focus (it may be hidden, e.g. an inactive tab/iframe) — ` +
+              'nothing was typed. Make it visible first (switch to its tab), take a new snapshot, then retry.',
+          )
+        }
       })
     }
     await prepareKeyboardPath()

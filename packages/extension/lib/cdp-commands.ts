@@ -2,8 +2,8 @@
 
 import {TOOL_ERROR_CODES} from '@chrome-in-harness/protocol'
 
-import {parseAxNodes} from './ax-types'
-import type {AxNode} from './ax-types'
+import {mergeFrameAxTrees, parseAxNodes} from './ax-types'
+import type {AxNode, FrameAxTree} from './ax-types'
 import {send, subscribeEvents, unsubscribeEvents, waitForEvent} from './cdp'
 import {consoleBuffer} from './console-buffer'
 import type {ConsoleLevel} from './console-buffer'
@@ -167,10 +167,59 @@ export function dropCollectors(tabId: number): void {
   forgetDomains(tabId)
 }
 
+interface FrameTreeNode {
+  readonly frame?: {readonly id?: string}
+  readonly childFrames?: readonly FrameTreeNode[]
+}
+
+/** frame 树里除主 frame 外的全部 frameId（文档序）。 */
+function childFrameIds(tree: FrameTreeNode | undefined): string[] {
+  const ids: string[] = []
+  const walk = (node: FrameTreeNode): void => {
+    for (const child of node.childFrames ?? []) {
+      if (typeof child.frame?.id === 'string') ids.push(child.frame.id)
+      walk(child)
+    }
+  }
+  if (tree !== undefined) walk(tree)
+  return ids
+}
+
+/**
+ * 全页 AX 树，含同进程 iframe 内容。getFullAXTree 不带 frameId 只返回主 frame，
+ * iframe 在树里是叶子（JumpServer 多终端里拿不到 textarea 的 ref）。这里逐个子 frame 取树，
+ * 按 DOM.getFrameOwner 找到宿主 <iframe>，嫁接到它的 AX 节点下。
+ * 跨进程 iframe（OOPIF）不在本会话里，取树失败即跳过，行为与之前相同。
+ */
 export async function getFullAxTree(tabId: number): Promise<AxNode[]> {
   await enableOnce(tabId, 'Accessibility', 'Accessibility.enable')
   const result = await send<{nodes?: unknown}>(tabId, 'Accessibility.getFullAXTree')
-  return parseAxNodes(result.nodes)
+  const main = parseAxNodes(result.nodes)
+  let frameIds: string[]
+  try {
+    await enableOnce(tabId, 'DOM', 'DOM.enable')
+    const tree = await send<{frameTree?: FrameTreeNode}>(tabId, 'Page.getFrameTree')
+    frameIds = childFrameIds(tree.frameTree)
+  } catch {
+    return main
+  }
+  // Promise.all 保持文档序：嵌套 iframe 的宿主须先于其子 frame 合并
+  const fetched = await Promise.all(
+    frameIds.map(async (frameId): Promise<FrameAxTree | null> => {
+      try {
+        const [owner, sub] = await Promise.all([
+          send<{backendNodeId?: number}>(tabId, 'DOM.getFrameOwner', {frameId}),
+          send<{nodes?: unknown}>(tabId, 'Accessibility.getFullAXTree', {frameId}),
+        ])
+        if (typeof owner.backendNodeId !== 'number') return null
+        return {frameId, ownerBackendNodeId: owner.backendNodeId, nodes: parseAxNodes(sub.nodes)}
+      } catch {
+        // OOPIF / 已卸载的 frame：拿不到就不展开
+        return null
+      }
+    }),
+  )
+  return mergeFrameAxTrees(main, fetched.filter((f): f is FrameAxTree => f !== null))
 }
 
 /** 导航等待策略：load 事件 / domcontentloaded(+500ms 静默) / networkidle(+500ms 静默)。 */
@@ -475,6 +524,8 @@ export interface FocusState {
   readonly insertionPoint: CursorPosition | null
   /** 焦点停在跨域 iframe 上，内部焦点读不到：可编辑性无法验证（不等于没落盘）。 */
   readonly crossOrigin: boolean
+  /** 焦点在 iframe 内时的落点描述（iframe 路径 + 标题 + URL）；顶层文档为 null。 */
+  readonly frame: string | null
 }
 
 /**
@@ -484,15 +535,16 @@ export interface FocusState {
  */
 const DEEP_ACTIVE_FN =
   'function __cicDeepActive() {' +
-  '  var doc = document, win = window, a = doc.activeElement;' +
+  '  var doc = document, win = window, a = doc.activeElement, frames = [];' +
   '  while (a && a.tagName === "IFRAME") {' +
   '    var d = null;' +
   '    try { d = a.contentDocument } catch (err) { d = null }' +
-  '    if (!d) return {el: a, win: win, crossOrigin: true};' +
+  '    if (!d) return {el: a, win: win, crossOrigin: true, frames: frames};' +
   '    if (!d.activeElement) break;' +
+  '    frames.push(a);' +
   '    doc = d; win = d.defaultView || win; a = d.activeElement;' +
   '  }' +
-  '  return {el: a, win: win, crossOrigin: false};' +
+  '  return {el: a, win: win, crossOrigin: false, frames: frames};' +
   '}'
 
 /**
@@ -509,7 +561,21 @@ export async function readInputFocus(tabId: number): Promise<FocusState> {
     '  var active = deep.el;' +
     '  if (!active) return {tag: "none", editable: false, monaco: false, line: null, col: null, crossOrigin: false};' +
     '  var tag = (active.tagName || "").toLowerCase();' +
-    '  if (deep.crossOrigin) return {tag: tag, editable: false, monaco: false, line: null, col: null, crossOrigin: true};' +
+    '  var frame = null;' +
+  '  if (deep.frames.length > 0) {' +
+  '    var path = deep.frames.map(function (f) {' +
+  '      var index = -1;' +
+  '      try { index = Array.prototype.indexOf.call(f.ownerDocument.getElementsByTagName("iframe"), f) } catch (err) {}' +
+  '      return "iframe[" + (index >= 0 ? index : "?") + "]";' +
+  '    }).join(" > ");' +
+  '    var inner = deep.frames[deep.frames.length - 1];' +
+  '    var label = "";' +
+  '    try { label = String(inner.title || inner.getAttribute("name") || inner.contentDocument.title || "") } catch (err) {}' +
+  '    var src = "";' +
+  '    try { src = String(inner.contentDocument.location.href) } catch (err) { src = String(inner.src || "") }' +
+  '    frame = path + (label ? " \\"" + label.slice(0, 80) + "\\"" : "") + (src ? " " + src.slice(0, 200) : "");' +
+  '  }' +
+  '  if (deep.crossOrigin) return {tag: tag, editable: false, monaco: false, line: null, col: null, crossOrigin: true, frame: frame};' +
     '  var monacoHost = false;' +
     '  try { monacoHost = !!(active.closest && active.closest(".monaco-editor")) } catch (err) {}' +
     '  var editable = monacoHost || tag === "textarea" || tag === "input" || active.isContentEditable === true;' +
@@ -535,11 +601,11 @@ export async function readInputFocus(tabId: number): Promise<FocusState> {
     '      }' +
     '    }' +
     '  } catch (err) {}' +
-    '  return {tag: tag, editable: editable, monaco: monacoHost, line: pos ? pos.line : null, col: pos ? pos.col : null, crossOrigin: false};' +
+    '  return {tag: tag, editable: editable, monaco: monacoHost, line: pos ? pos.line : null, col: pos ? pos.col : null, crossOrigin: false, frame: frame};' +
     '})()'
   const value = await evaluateJson<Record<string, unknown>>(tabId, script)
   if (typeof value !== 'object' || value === null) {
-    return {tag: 'unknown', editable: false, monaco: false, insertionPoint: null, crossOrigin: false}
+    return {tag: 'unknown', editable: false, monaco: false, insertionPoint: null, crossOrigin: false, frame: null}
   }
   const line = value['line']
   const col = value['col']
@@ -551,6 +617,7 @@ export async function readInputFocus(tabId: number): Promise<FocusState> {
     monaco: value['monaco'] === true,
     insertionPoint,
     crossOrigin: value['crossOrigin'] === true,
+    frame: typeof value['frame'] === 'string' ? value['frame'] : null,
   }
 }
 
@@ -829,6 +896,33 @@ export async function pressKeyCombo(
 /** DOM.focus：把 ref 指向的元素设为焦点（不点击、不动光标位置）。 */
 export async function focusNode(tabId: number, backendNodeId: number): Promise<void> {
   await send(tabId, 'DOM.focus', {backendNodeId})
+}
+
+/**
+ * ref 节点是否就是「真正的」焦点元素：自身是所在文档的 activeElement，且沿 frameElement
+ * 逐层向上，每层 iframe 都是父文档的 activeElement。隐藏 iframe 里的 focus() 会静默失败，
+ * 焦点仍留在别的 iframe（JumpServer 多终端误投），这里据此拒绝输入。
+ * 父文档跨域时 frameElement 为 null，链路到此为止（无法再向上验证）。
+ */
+export async function isNodeDeepFocused(tabId: number, backendNodeId: number): Promise<boolean> {
+  const value = await callOnNode(
+    tabId,
+    backendNodeId,
+    'function () {' +
+      '  var doc = this.ownerDocument;' +
+      '  if (!doc || doc.activeElement !== this) return false;' +
+      '  var win = doc.defaultView;' +
+      '  while (win) {' +
+      '    var frame = null;' +
+      '    try { frame = win.frameElement } catch (err) { frame = null }' +
+      '    if (!frame) return true;' +
+      '    if (frame.ownerDocument.activeElement !== frame) return false;' +
+      '    win = frame.ownerDocument.defaultView;' +
+      '  }' +
+      '  return true;' +
+      '}',
+  )
+  return value === true
 }
 
 /** backendNodeId → JS 对象 objectId；DOM agent 未绑定时 getDocument 重绑再试一次。 */
