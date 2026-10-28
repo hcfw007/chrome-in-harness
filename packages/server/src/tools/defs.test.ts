@@ -622,6 +622,27 @@ describe('evaluate defs', () => {
     }
   })
 
+  test('evaluate_script text contract: every non-truncated type parses (undefined stays a bare word)', async () => {
+    const cases: Array<[string, string, string]> = [
+      ['', 'string', '""'],
+      ['{"a":1}', 'object', '{"a":1}'],
+      ['undefined', 'undefined', 'undefined'],
+    ]
+    for (const [value, type, text] of cases) {
+      const fake = fakeBridge({value, type, truncated: false})
+      const content = await run(byName('evaluate_script'), {expression: 'x'}, fake.call)
+      expect((content[0] as {text: string}).text).toBe(text)
+    }
+  })
+
+  test('evaluate_script truncated objects keep the marker on its own line', async () => {
+    const fake = fakeBridge({value: '{"t":"oo…', type: 'object', truncated: true, originalLength: 210008})
+    const content = await run(byName('evaluate_script'), {expression: 'x'}, fake.call)
+    const text = (content[0] as {text: string}).text
+    expect(text.split('\n').at(-1)).toBe('[TRUNCATED: kept 8 of 210008 chars]')
+    expect(() => JSON.parse(text)).toThrow()
+  })
+
   test('evaluate_script forwards awaitPromise and tabId', async () => {
     const fake = fakeBridge({value: '5', type: 'number', truncated: false})
     await run(byName('evaluate_script'), {expression: '(async () => 5)()', awaitPromise: true, tabId: 3}, fake.call)

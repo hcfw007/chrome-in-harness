@@ -15,7 +15,9 @@ const evaluateScript = defineTool({
   description:
     'Evaluate a JavaScript expression in the page context of the managed tab. ' +
     'The result text is the bare JSON value (strings are JSON-quoted), so it can be passed to JSON.parse directly; ' +
-    'an undefined result is the text `undefined`. ' +
+    'an undefined result is the text `undefined` (not JSON). ' +
+    'Some clients (e.g. code-mode wrappers) parse object/array results for you and hand over the rest as text: ' +
+    'check typeof before calling JSON.parse, and check for a trailing [TRUNCATED…] line first — a truncated result never parses. ' +
     'The script MAY change the page: DOM writes and element.click() are allowed, and it runs with a user gesture ' +
     'so handlers that need user activation work — prefer click(ref) when you want real input events. ' +
     'A blacklist rejects network access (fetch/XHR/WebSocket/sendBeacon), eval/Function, navigation ' +

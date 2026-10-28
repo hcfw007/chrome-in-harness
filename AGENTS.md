@@ -23,7 +23,8 @@
 - Ref-based input (`click` / `type` / `hover` / `select_option`) goes through `locateUncovered` in `tools/interact.ts`: it hit-tests the element center and throws `ELEMENT_COVERED` rather than clicking a modal mask (antd closes the modal on mask click). `click_at` is the deliberate escape hatch and is not checked. New ref-clicking tools should use the same helper.
 - CDP key events on macOS: Ctrl+A moves the caret to line start, and synthetic shortcuts do not trigger editing commands by themselves. Select-all needs the Meta modifier plus `commands: ['selectAll']` on `Input.dispatchKeyEvent` (`dispatchKey` in `lib/cdp-commands.ts`, `selectAllModifier` in `lib/keymap.ts`).
 - Source comments and launcher CLI output are in Chinese; MCP tool descriptions and results (read by agents) are in English. Keep each side consistent.
-- Tool-result wording lives in the server `defs-*.ts` `run()` functions, not in the extension; `evaluate_script` output must stay `JSON.parse`-able (strings are JSON-quoted, truncation goes on a separate `[TRUNCATED]` line).
+- Tool-result wording lives in the server `defs-*.ts` `run()` functions, not in the extension; `evaluate_script` output must stay `JSON.parse`-able (strings are JSON-quoted, truncation goes on a separate `[TRUNCATED: kept N of M chars]` line).
+- `type` / `press_key` failures are `INPUT_NOT_LANDED` built by `lib/input-errors.ts` and must state what was already sent (`InputPhase`: none / click / text). Never claim "No input was sent" after a click or text dispatch. Map CDP target errors through the typed `NotRenderedError` / `NotFocusableError` (`mapTargetError`) instead of matching raw CDP strings in tools.
 
 ## Local runtime gotchas
 

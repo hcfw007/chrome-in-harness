@@ -19,14 +19,52 @@ export function buildOcclusionFn(rawX: number, rawY: number): string {
   const y = scriptNumber('y', rawY)
   return `function () {
     const clip = (s) => (s || '').trim().replace(/\\s+/g, ' ').slice(0, ${TEXT_MAX})
+    const describe = (hit) => {
+      const cls = typeof hit.className === 'string' ? hit.className : ''
+      return {
+        kind: 'covered',
+        tag: hit.tagName.toLowerCase(),
+        id: hit.id || undefined,
+        cls: clip(cls) || undefined,
+        text: clip(hit.innerText || hit.textContent) || undefined,
+      }
+    }
+    const pierce = (doc, px, py) => {
+      let hit = doc.elementFromPoint(px, py)
+      while (hit && hit.shadowRoot) {
+        const inner = hit.shadowRoot.elementFromPoint(px, py)
+        if (!inner || inner === hit) break
+        hit = inner
+      }
+      return hit
+    }
     const self = this.nodeType === 1 ? this : this.parentElement
     if (!self) return {kind: 'unknown'}
-    let hit = document.elementFromPoint(${x}, ${y})
-    while (hit && hit.shadowRoot) {
-      const inner = hit.shadowRoot.elementFromPoint(${x}, ${y})
-      if (!inner || inner === hit) break
-      hit = inner
+    // 坐标是顶层视口坐标。目标在同源 iframe 里时，从顶层逐层确认该点命中的是那层 iframe
+    // （否则点击会落到盖在上面的另一个 iframe / 元素），再换算成目标文档内坐标
+    const frames = []
+    let win = self.ownerDocument.defaultView
+    while (win) {
+      let frame = null
+      try { frame = win.frameElement } catch (err) { frame = null }
+      if (!frame) break
+      frames.push(frame)
+      win = frame.ownerDocument.defaultView
     }
+    // 外层是跨域 frame：拿不到顶层坐标系，无法判定（放行）
+    if (win && win.parent !== win) return {kind: 'unknown'}
+    let x = ${x}, y = ${y}
+    for (let i = frames.length - 1; i >= 0; i--) {
+      const frame = frames[i]
+      const frameHit = pierce(frame.ownerDocument, x, y)
+      if (!frameHit) return {kind: 'outside'}
+      if (frameHit !== frame) return describe(frameHit)
+      const rect = frame.getBoundingClientRect()
+      const style = frame.ownerDocument.defaultView.getComputedStyle(frame)
+      x -= rect.left + frame.clientLeft + (parseFloat(style.paddingLeft) || 0)
+      y -= rect.top + frame.clientTop + (parseFloat(style.paddingTop) || 0)
+    }
+    const hit = pierce(self.ownerDocument, x, y)
     if (!hit) return {kind: 'outside'}
     // 命中目标自身或其后代（按钮里的图标/文字 span）= 点击会到达目标
     if (self === hit || self.contains(hit)) return {kind: 'clear'}
@@ -41,14 +79,7 @@ export function buildOcclusionFn(rawX: number, rawY: number): string {
     const controlRoot = self.closest && self.closest(CONTROL_ROOT)
     if (controlRoot && controlRoot.contains(hit)) return {kind: 'clear'}
     // 其余情况（遮罩、浮层、命中目标的祖先空白处）：真实点击落不到目标上
-    const cls = typeof hit.className === 'string' ? hit.className : ''
-    return {
-      kind: 'covered',
-      tag: hit.tagName.toLowerCase(),
-      id: hit.id || undefined,
-      cls: clip(cls) || undefined,
-      text: clip(hit.innerText || hit.textContent) || undefined,
-    }
+    return describe(hit)
   }`
 }
 

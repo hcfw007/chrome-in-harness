@@ -82,7 +82,7 @@ Chrome 扩展 · MV3 service worker / WXT
 - **reload**：重新加载当前页并按 navigate 同款策略等待；`hard:true` 绕过 HTTP 缓存（验证部署，免去加随机 query 污染路由）；旧 ref 全部失效
 - **screenshot**：按标准档图片规则缩放（长边 ≤ 1568、视觉 token ≤ 1568），宿主不会再二次缩放；文本回报视口尺寸、dpr、图片尺寸与「1 图片像素 = N CSS 像素」。在图上量到的坐标用 `click_at({space: "image"})` 传入，由扩展换算
 - **add_allowlist_domain**：显式扩白名单（无确认窗口，直接生效）。一般无需手动调用——访问新域名会自动弹确认窗口
-- **evaluate_script**：受限 `Runtime.evaluate` 执行页面上下文 JS。脚本可以改页面（DOM 写入、`element.click()` 均允许），黑名单只拒绝网络访问（fetch/XHR/WebSocket/sendBeacon）、eval/Function、导航（location/window.open）、document.write、debugger 与 `chrome.*`；可用 `!`/`~`/`+`/`-` 开头的表达式；`awaitPromise:true` 需 async IIFE；结果文本就是 JSON 值（字符串带引号），可直接 `JSON.parse`，超限截断时另起一行标 `[TRUNCATED]`；以用户手势执行，脚本内 `element.click()` 触发的页面 `window.open` 不会被弹窗拦截
+- **evaluate_script**：受限 `Runtime.evaluate` 执行页面上下文 JS。脚本可以改页面（DOM 写入、`element.click()` 均允许），黑名单只拒绝网络访问（fetch/XHR/WebSocket/sendBeacon）、eval/Function、导航（location/window.open）、document.write、debugger 与 `chrome.*`；可用 `!`/`~`/`+`/`-` 开头的表达式；`awaitPromise:true` 需 async IIFE；结果文本就是 JSON 值（字符串带引号），可直接 `JSON.parse`（`undefined` 例外，是裸词）；Code Mode 等客户端会把对象/数组结果先解析好，其余仍是文本，`JSON.parse` 前先看 `typeof`；字符串与对象共用 20 万字符上限，超限时另起一行标 `[TRUNCATED: kept N of M chars]`，截断结果不可解析，先查这一行；以用户手势执行，脚本内 `element.click()` 触发的页面 `window.open` 不会被弹窗拦截
 - **request_permission**：针对域名发起 `chrome.permissions.request` 原生授权弹窗，授予后同步写入 storage 白名单。仅当用户明确要求时调用
 - **takeover_tab**：把已打开、未受管的用户 tab 收编进受管组（`tab_list` 标 `[managed:<groupId>]` 便于识别），对已受管的 tab 是空操作；仅在用户明确要求在该 tab 工作时调用，URL 必须已在白名单。不激活、不聚焦、不导航、不跨窗口搬 tab（只并入同窗口的受管组，否则在该窗口新建）；tab 在用户自建的其他分组里时拒绝并报 `TAB_IN_USER_GROUP`，不拆用户分组；接管的是用户正在看的页时结果会注明，提醒后续操作对用户可见
 - **ensure_tab / run_actions**：见下文[标签页使用约定](#标签页使用约定)与[批量执行](#批量执行)
@@ -96,7 +96,7 @@ Chrome 扩展 · MV3 service worker / WXT
 - **get_text**：优先读 AX value（虚拟滚动编辑器全文唯一可靠读数），innerText 兜底，上限 8KB
 - **select_option**：按可见文本选择下拉项，`ref` 指向原生 `<select>` 或自定义下拉（antd / Element / ARIA combobox）的选择框。原生 select 直接设值；自定义下拉点开后用真实鼠标点一次匹配项，再回读选择框显示的值。精确匹配优先于包含匹配，禁用项拒绝；`search:true` 先在搜索框输入文本过滤，用于虚拟列表里未渲染的项；找不到时报错列出当前可见选项
 - **hover**：`ref` / `selector` / `text` / `x+y` 四选一，selector 适合 snapshot 里没有 ref 的纯图标元素（如 tooltip 触发器）
-- **type**：`mode="insert"`（默认）/ `mode="verbatim"`（Monaco 类编辑器逐行 insertText 还原缩进，无 trim）/ `mode="set"`（monaco `setValue` 原子写整个缓冲——绕开键盘/焦点/IME 通路，窗口失焦、键路死亡、编辑器塌缩都不影响；ref 可省，单编辑器页面自动选中）；焦点不在可编辑元素时显式报 `INPUT_NOT_LANDED` 而非静默假成功；`clear:true` 用全选（macOS Cmd+A，其余 Ctrl+A）+ Delete 清空，清不掉时报错而不追加；返回插入点概要 `{line, col}` 和输入后的实际值供模型自查
+- **type**：`mode="insert"`（默认）/ `mode="verbatim"`（Monaco 类编辑器逐行 insertText 还原缩进，无 trim）/ `mode="set"`（monaco `setValue` 原子写整个缓冲——绕开键盘/焦点/IME 通路，窗口失焦、键路死亡、编辑器塌缩都不影响；ref 可省，单编辑器页面自动选中）；焦点不在可编辑元素时显式报 `INPUT_NOT_LANDED` 而非静默假成功；多 iframe 页面（多会话 Web 终端）务必传目标输入框的 `ref`：目标隐藏、disabled、被别的 iframe 盖住、已分离或 ref 过期时直接拒绝，不回退到其他输入框；不传 `ref` 时按当前实际焦点输入，`evaluate_script` 里对隐藏 iframe 的 `focus()` 会静默失败，结果中的 `Landed in frame` 只是事后核对、不是输入前的绑定；输入成功只代表浏览器收到了按键，不代表 SSH 已连接或远端命令已执行；`clear:true` 用全选（macOS Cmd+A，其余 Ctrl+A）+ Delete 清空，清不掉时报错而不追加；返回插入点概要 `{line, col}` 和输入后的实际值供模型自查
 - **wait editorRendered**：Monaco 渲染完成 = 高度 > 40px 且宽度 > 200px 且有非空 view-line——resize 后塌缩成 5×5 窄条的假就绪不再放过；检测到塌缩自动按父容器尺寸强制 `layout()` 重排救回（无参 layout 会按自身窄宽度自我维持，必须显式传维度）
 - **输入路径**：常规点击与输入通过 CDP `Input.*` 派发浏览器事件；`type mode="set"` 则直接调用 Monaco API，不模拟逐键输入。不保证网站将自动化操作视为人工操作
 - **域名白名单 + 运行时确认**：`chrome.storage.local` 持久化，扩展侧在 attach 前校验，空名单 = 拒绝全部；规则 `example.com` 匹配自身与任意深度子域。访问未授权域名时**自动弹出确认窗口**（显示域名与来源 URL，允许/拒绝），工具即时返回 `DOMAIN_CONFIRMATION_REQUIRED`（非阻塞），用户点「允许」后重试即通过——无需手动改配置
@@ -236,6 +236,7 @@ agent 应优先使用 `ensure_tab`，保存返回的 `{tabId, url, reused}`，�
 | `TAB_NOT_MANAGED` / `TAB_CLOSED` / `TAB_IN_USER_GROUP` | 标签不在受管组 / 已关闭 / 在用户自建分组里（`takeover_tab` 不会拆它） |
 | `STALE_REF` / `NO_SNAPSHOT` | ref 过期或扩展重启过，重新 snapshot |
 | `ELEMENT_COVERED` | 目标中心点被遮罩或浮层盖住，`click` / `type` / `hover` / `select_option` 没有派发输入；先关掉遮挡层，或改操作遮挡层里的元素 |
+| `INPUT_NOT_LANDED` | `type` / `press_key` 没能把输入送进目标。报文说明已发出的内容：`No input was sent`（修正目标后可重试）/ `A focusing click was dispatched…`（只点了、没打字）/ `Input WAS sent`（先回读字段，不要盲目重发） |
 | `EXTENSION_DISCONNECTED` | 扩展未连接；刚断开时多半在重连，稍等几秒重试 |
 | `TOOL_TIMEOUT` | 扩展超时未回包：页面卡住、有弹窗挡住，或 DevTools 占用了 debugger |
 | `DEBUGGER_BUSY` | 该标签已打开 DevTools，关掉后重试 |

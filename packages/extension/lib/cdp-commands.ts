@@ -5,8 +5,10 @@ import {TOOL_ERROR_CODES} from '@chrome-in-harness/protocol'
 import {mergeFrameAxTrees, parseAxNodes} from './ax-types'
 import type {AxNode, FrameAxTree} from './ax-types'
 import {send, subscribeEvents, unsubscribeEvents, waitForEvent} from './cdp'
+import {isStaleNodeError} from './cdp-errors'
 import {consoleBuffer} from './console-buffer'
 import type {ConsoleLevel} from './console-buffer'
+import {NotFocusableError, NotRenderedError} from './input-errors'
 import type {InputModifier, KeyDispatch} from './keymap'
 import {keyDownText, modifierBitmask, resolveKey} from './keymap'
 import {describeLoadingFailure, networkBuffer} from './network-buffer'
@@ -424,7 +426,7 @@ export async function scrollIntoViewIfNeeded(tabId: number, backendNodeId: numbe
     // 原样透传的 CDP 报文（{"code":-32000,...}）对模型不可行动：元素常是随弹窗关闭被隐藏了
     const message = error instanceof Error ? error.message : String(error)
     if (!message.includes(NO_LAYOUT_MARKER)) throw error
-    throw new Error(
+    throw new NotRenderedError(
       'element is not rendered (display:none or removed — e.g. its modal or dropdown was closed); ' +
         'take a new snapshot to see the current page',
       {cause: error},
@@ -450,7 +452,8 @@ export async function elementCenter(
     result = await send<BoxModelResult>(tabId, 'DOM.getBoxModel', {backendNodeId})
   } catch (error) {
     // CDP 对 display:none / 已分离节点直接报错（如 "Node does not have a layout object"），换成可行动的文案
-    throw new Error(
+    if (isStaleNodeError(error)) throw error
+    throw new NotRenderedError(
       `element has no layout (gone, hidden, or display:none) — take a new snapshot (${error instanceof Error ? error.message : String(error)})`,
       {cause: error},
     )
@@ -893,9 +896,22 @@ export async function pressKeyCombo(
   await dispatchKey(tabId, info, modifiers)
 }
 
+/** CDP 对 disabled / inert / 不可聚焦元素调用 DOM.focus 的报文片段。 */
+const NOT_FOCUSABLE_MARKER = 'Element is not focusable'
+
 /** DOM.focus：把 ref 指向的元素设为焦点（不点击、不动光标位置）。 */
 export async function focusNode(tabId: number, backendNodeId: number): Promise<void> {
-  await send(tabId, 'DOM.focus', {backendNodeId})
+  try {
+    await send(tabId, 'DOM.focus', {backendNodeId})
+  } catch (error) {
+    // 原始报文是 {"code":-32000,"message":"Element is not focusable"}，换成可识别的类型
+    const message = error instanceof Error ? error.message : String(error)
+    if (!message.includes(NOT_FOCUSABLE_MARKER)) throw error
+    throw new NotFocusableError(
+      'element cannot receive focus (disabled, inert, or not focusable) — pick an enabled element and retry',
+      {cause: error},
+    )
+  }
 }
 
 /**
@@ -909,8 +925,14 @@ export async function isNodeDeepFocused(tabId: number, backendNodeId: number): P
     tabId,
     backendNodeId,
     'function () {' +
-      '  var doc = this.ownerDocument;' +
-      '  if (!doc || doc.activeElement !== this) return false;' +
+      // shadow DOM 内的元素：document.activeElement 是宿主，需逐层 shadow root 向上比对
+      '  var node = this, root = node.getRootNode ? node.getRootNode() : node.ownerDocument;' +
+      '  while (root && root.host) {' +
+      '    if (root.activeElement !== node) return false;' +
+      '    node = root.host; root = node.getRootNode();' +
+      '  }' +
+      '  var doc = node.ownerDocument;' +
+      '  if (!doc || doc.activeElement !== node) return false;' +
       '  var win = doc.defaultView;' +
       '  while (win) {' +
       '    var frame = null;' +
@@ -923,6 +945,41 @@ export async function isNodeDeepFocused(tabId: number, backendNodeId: number): P
       '}',
   )
   return value === true
+}
+
+/**
+ * 点击后的 frame 级校验：顶层沿 activeElement 下钻到最深的同源文档，是否就是 ref 所在文档。
+ * 不要求 ref 本身获焦（disabled 等由随后的可编辑性检查报告），只拦「焦点进了另一个 iframe」。
+ * 检查本身失败按通过处理：此时点击已派发，抛出可恢复错误会让 withRef 重放点击。
+ */
+export async function isFocusInNodeFrame(tabId: number, backendNodeId: number): Promise<boolean> {
+  try {
+    const value = await callOnNode(
+      tabId,
+      backendNodeId,
+      // callFunctionOn 在节点所在 frame 执行（document 是 iframe 的文档），先沿 frameElement 走到顶层
+      'function () {' +
+        '  var top = this.ownerDocument, frame = null;' +
+        '  while (top.defaultView) {' +
+        '    try { frame = top.defaultView.frameElement } catch (err) { frame = null }' +
+        '    if (!frame) break;' +
+        '    top = frame.ownerDocument;' +
+        '  }' +
+        '  if (top.defaultView && top.defaultView.parent !== top.defaultView) return null;' +
+        '  var doc = top, a = doc.activeElement;' +
+        '  while (a && a.tagName === "IFRAME") {' +
+        '    var d = null;' +
+        '    try { d = a.contentDocument } catch (err) { d = null }' +
+        '    if (!d) return null;' +
+        '    doc = d; a = d.activeElement;' +
+        '  }' +
+        '  return doc === this.ownerDocument;' +
+        '}',
+    )
+    return value !== false
+  } catch {
+    return true
+  }
 }
 
 /** backendNodeId → JS 对象 objectId；DOM agent 未绑定时 getDocument 重绑再试一次。 */
