@@ -76,6 +76,5 @@ export const evaluateScript: ToolHandler = async (rawParams) => {
     throw toolError(TOOL_ERROR_CODES.SCRIPT_ERROR, message)
   }
 
-  const {value: serialized, type, truncated} = serializeValue(value)
-  return {value: serialized, type, truncated}
+  return serializeValue(value)
 }

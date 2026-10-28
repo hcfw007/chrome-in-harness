@@ -1,5 +1,5 @@
 import {describe, expect, test} from 'vitest'
-import {serializeValue} from './serialize.js'
+import {MAX_RESULT_JSON, serializeValue} from './serialize.js'
 
 describe('serializeValue', () => {
   test('handles primitives', () => {
@@ -14,10 +14,22 @@ describe('serializeValue', () => {
     expect(serializeValue({a: 1})).toEqual({value: '{"a":1}', type: 'object', truncated: false})
   })
 
-  test('truncates long strings', () => {
-    const result = serializeValue('x'.repeat(2000))
+  test('keeps multi-KB strings intact (same cap as objects)', () => {
+    const text = `BEGIN-${'a'.repeat(5000)}-END`
+    expect(serializeValue(text)).toEqual({value: text, type: 'string', truncated: false})
+  })
+
+  test('truncates strings over the cap and reports the original length', () => {
+    const result = serializeValue('x'.repeat(MAX_RESULT_JSON + 10))
     expect(result.truncated).toBe(true)
-    expect(result.value.length).toBeLessThan(2000)
+    expect(result.originalLength).toBe(MAX_RESULT_JSON + 10)
+    expect(result.value).toBe(`${'x'.repeat(MAX_RESULT_JSON)}…`)
+  })
+
+  test('truncates oversized objects and reports the JSON length', () => {
+    const result = serializeValue({text: 'y'.repeat(MAX_RESULT_JSON)})
+    expect(result.truncated).toBe(true)
+    expect(result.originalLength).toBe(MAX_RESULT_JSON + 11)
   })
 
   test('falls back to String() on circular structures', () => {

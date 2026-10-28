@@ -105,3 +105,46 @@ export function parseAxNodes(raw: unknown): AxNode[] {
   }
   return nodes
 }
+
+/** 一个子 frame 的 AX 树及其宿主 <iframe> 的 backendNodeId。 */
+export interface FrameAxTree {
+  readonly frameId: string
+  readonly ownerBackendNodeId: number
+  readonly nodes: readonly AxNode[]
+}
+
+/**
+ * 把子 frame 的 AX 树嫁接到宿主 <iframe> 节点下（纯逻辑）。
+ * 各 frame 的 AX nodeId 互相独立、可能重号，统一加 frameId 前缀去重；
+ * 子 frame 的根挂为宿主节点的子节点。frames 须按文档序给出（父 frame 在前），
+ * 嵌套 iframe 的宿主才能在已合并的节点里找到。找不到宿主的 frame 丢弃。
+ */
+export function mergeFrameAxTrees(main: readonly AxNode[], frames: readonly FrameAxTree[]): AxNode[] {
+  if (frames.length === 0) return [...main]
+  const merged: AxNode[] = [...main]
+  const indexByBackend = new Map<number, number>()
+  const remember = (node: AxNode, index: number): void => {
+    if (node.backendDOMNodeId !== undefined && !indexByBackend.has(node.backendDOMNodeId)) {
+      indexByBackend.set(node.backendDOMNodeId, index)
+    }
+  }
+  merged.forEach(remember)
+  for (const frame of frames) {
+    const root = frame.nodes[0]
+    const ownerIndex = indexByBackend.get(frame.ownerBackendNodeId)
+    if (root === undefined || ownerIndex === undefined) continue
+    const prefix = `${frame.frameId}:`
+    const owner = merged[ownerIndex] as AxNode
+    merged[ownerIndex] = {...owner, childIds: [...owner.childIds, prefix + root.nodeId]}
+    for (const node of frame.nodes) {
+      const renamed: AxNode = {
+        ...node,
+        nodeId: prefix + node.nodeId,
+        childIds: node.childIds.map((id) => prefix + id),
+        frameId: node.frameId ?? frame.frameId,
+      }
+      remember(renamed, merged.push(renamed) - 1)
+    }
+  }
+  return merged
+}

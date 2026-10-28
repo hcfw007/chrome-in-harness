@@ -14,6 +14,8 @@ import {
   ensureKeyPipelineAlive,
   evaluateJson,
   focusNode,
+  isFocusInNodeFrame,
+  isNodeDeepFocused,
   getViewportMetrics,
   insertText,
   monacoSetValue,
@@ -25,6 +27,8 @@ import {
 import type {ClickOptions, CursorPosition, FocusState} from '../lib/cdp-commands'
 import {buildHitTestScript, parseHitTestResult} from '../lib/hit-test'
 import type {HitInfo} from '../lib/hit-test'
+import {focusInOtherFrameError, inputNotLanded, mapTargetError, notFocusedError} from '../lib/input-errors'
+import type {InputPhase} from '../lib/input-errors'
 import {resolveKey, selectAllModifier} from '../lib/keymap'
 import type {InputModifier} from '../lib/keymap'
 import {buildOcclusionFn, parseOcclusion} from '../lib/occlusion'
@@ -258,9 +262,11 @@ async function clearFocused(tabId: number): Promise<void> {
   const remaining = await readFocusedValue(tabId)
   if (remaining === null || remaining === '') return
   if (await clearFocusedNativeValue(tabId)) return
-  throw new Error(
-    `INPUT_NOT_LANDED: clear:true could not empty the field (still "${remaining.slice(0, 80)}") — ` +
-      'select its content with press_key and Delete, then type without clear.',
+  // 全选 + Delete 已经按下：不能说「未发送」
+  throw inputNotLanded(
+    `clear:true could not empty the field (still "${remaining.slice(0, 80)}"); select-all and Delete were pressed, the new text was not typed`,
+    'text',
+    'Select its content with press_key and Delete, then type without clear.',
   )
 }
 
@@ -338,17 +344,30 @@ export const typeText: ToolHandler = async (params) => {
       return null
     }
   }
-  const assertLanded = (state: FocusState | null, when: 'before' | 'after'): void => {
+  /** phase：失败时已派发了什么（决定报文能否说「未发送」）。 */
+  const assertLanded = (state: FocusState | null, phase: InputPhase): void => {
     // 跨域 iframe 内的焦点读不到：只能报「无法验证」，不能断言「没落盘」
     if (state === null || state.editable || state.crossOrigin) return
-    const hint =
-      when === 'before'
-        ? 'text would go nowhere. Click the editor/input ref first (or wait editorRendered), then retry.'
-        : 'text did not land — focus left the editable during typing; re-click the target and verify with get_text.'
-    throw new Error(`INPUT_NOT_LANDED: focus is on <${state.tag}> — ${hint}`)
+    if (phase === 'text') {
+      throw inputNotLanded(
+        `focus left the editable during typing (now on <${state.tag}>)`,
+        'text',
+        'Re-focus the target and check its content with get_text.',
+      )
+    }
+    throw inputNotLanded(
+      `focus is on <${state.tag}>, not an editable element, so text would go nowhere` +
+        (raw.ref !== undefined ? ` (${raw.ref} may be disabled or not an input)` : ''),
+      phase,
+      raw.ref !== undefined
+        ? 'Pass the ref of a visible, enabled input (or wait editorRendered), then retry.'
+        : 'Pass the ref of the target input instead of relying on current focus.',
+    )
   }
-  const prepareKeyboardPath = async (): Promise<void> => {
-    assertLanded(await readFocusSafe(), 'before')
+  let before: FocusState | null = null
+  const prepareKeyboardPath = async (phase: Exclude<InputPhase, 'text'>): Promise<void> => {
+    before = await readFocusSafe()
+    assertLanded(before, phase)
     if (mode === 'verbatim' || raw.clear === true || raw.submit === true) {
       await ensureKeyPipelineAlive(target.tabId)
     }
@@ -395,9 +414,11 @@ export const typeText: ToolHandler = async (params) => {
     insertionPoint?: CursorPosition
     value?: string
     unverified?: true
+    frame?: string
   }> => {
     const after = await readFocusSafe()
-    assertLanded(after, 'after')
+    assertLanded(after, 'text')
+    const landedFrame = (before as FocusState | null)?.frame ?? after?.frame ?? null
     // submit 后焦点可能已离开输入框（表单提交/弹窗关闭），回读的不是目标元素，不报
     const value = raw.submit === true ? null : await readFocusedValue(target.tabId).catch(() => null)
     return {
@@ -408,6 +429,8 @@ export const typeText: ToolHandler = async (params) => {
         ? {insertionPoint: after.insertionPoint}
         : {}),
       ...(value !== null ? {value} : {}),
+      // 落点取输入前的焦点：submit 后焦点可能已移走
+      ...(landedFrame !== null ? {frame: landedFrame} : {}),
     }
   }
 
@@ -415,12 +438,9 @@ export const typeText: ToolHandler = async (params) => {
     // 不做隐式点击：光标/选区保持原位（Monaco 行尾追加/插入行中的解法）。
     // 给了 ref 时只做 DOM.focus（不点击），否则直接向当前焦点元素输入。
     if (raw.ref !== undefined) {
-      await withRef(target.tabId, raw.ref, async (entry) => {
-        await scrollIntoViewIfNeeded(target.tabId, entry.backendDOMNodeId)
-        await focusNode(target.tabId, entry.backendDOMNodeId)
-      })
+      await focusRefOrThrow(target.tabId, raw.ref)
     }
-    await prepareKeyboardPath()
+    await prepareKeyboardPath('none')
     if (mode === 'verbatim') await typeVerbatim()
     else await typeInsert()
     return buildResult()
@@ -429,14 +449,38 @@ export const typeText: ToolHandler = async (params) => {
   if (raw.ref === undefined) {
     throw new Error('ref is required unless focus="none"')
   }
-  await withRef(target.tabId, raw.ref, async (entry) => {
-    const {x, y} = await locateUncovered(target.tabId, entry.backendDOMNodeId, 'type')
+  const ref = raw.ref
+  await withRef(target.tabId, ref, async (entry) => {
+    const {x, y} = await locateUncovered(target.tabId, entry.backendDOMNodeId, 'type').catch((error: unknown) => {
+      throw mapTargetError(error, ref)
+    })
     await dispatchClick(target.tabId, x, y)
-    await prepareKeyboardPath()
+    // 点击落到了别的 frame（被另一个 iframe 盖住、点击被截走）：已发点击，绝不继续输入
+    if (!(await isFocusInNodeFrame(target.tabId, entry.backendDOMNodeId))) {
+      throw focusInOtherFrameError(ref, (await readFocusSafe())?.frame ?? null)
+    }
+    await prepareKeyboardPath('click')
     if (mode === 'verbatim') await typeVerbatim()
     else await typeInsert()
   })
   return buildResult()
+}
+
+/**
+ * focus:"none" / press_key 的 ref 聚焦：DOM.focus 后确认 ref 真的持有焦点。
+ * 隐藏 iframe 内的元素 DOM.focus 不报错却拿不到焦点，焦点留在别的终端：必须拒绝，不能误投。
+ * 此阶段尚未派发任何输入，错误统一为 INPUT_NOT_LANDED + "No input was sent"。
+ */
+async function focusRefOrThrow(tabId: number, ref: string): Promise<void> {
+  try {
+    await withRef(tabId, ref, async (entry) => {
+      await scrollIntoViewIfNeeded(tabId, entry.backendDOMNodeId)
+      await focusNode(tabId, entry.backendDOMNodeId)
+      if (!(await isNodeDeepFocused(tabId, entry.backendDOMNodeId))) throw notFocusedError(ref)
+    })
+  } catch (error) {
+    throw mapTargetError(error, ref)
+  }
 }
 
 /** 单键 press：可选先 focus ref 元素；支持 ctrl/alt/shift/meta 组合键。 */
@@ -453,11 +497,9 @@ export const pressKey: ToolHandler = async (params) => {
   // 键路探针：resize/失焦后按键会静默丢失，死了先自愈、仍死显式报错
   await ensureKeyPipelineAlive(target.tabId)
   if (raw.ref !== undefined) {
-    await withRef(target.tabId, raw.ref, async (entry) => {
-      await scrollIntoViewIfNeeded(target.tabId, entry.backendDOMNodeId)
-      await focusNode(target.tabId, entry.backendDOMNodeId)
-      await dispatchKey(target.tabId, resolved.info, raw.modifiers ?? [])
-    })
+    // 与 type(focus:"none") 同一校验：ref 没拿到焦点就不按键，避免按到别的终端里
+    await focusRefOrThrow(target.tabId, raw.ref)
+    await dispatchKey(target.tabId, resolved.info, raw.modifiers ?? [])
     return {}
   }
   await dispatchKey(target.tabId, resolved.info, raw.modifiers ?? [])

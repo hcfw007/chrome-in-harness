@@ -214,7 +214,18 @@ const type = defineTool({
     'clear:true empties the field first (select-all — Cmd+A on macOS, Ctrl+A elsewhere — then Delete) and fails with ' +
     'INPUT_NOT_LANDED instead of appending if content remains; redundant and rejected with set. ' +
     'focus:"none" skips the implicit click: with ref it only DOM.focuses the element (caret stays put); ' +
-    'without ref it types into whatever is focused. ' +
+    'without ref it types into whatever is focused right now. ' +
+    'TARGETING on pages with several iframes (multi-session web terminals): always pass the target input\'s ref. ' +
+    'With a ref, a target that is hidden, disabled, covered by another iframe, detached or stale is rejected and ' +
+    'nothing falls back to another input. Without a ref there is no target binding: focus:"none" does NOT mean ' +
+    '"the element evaluate_script focused" — script focus() inside a hidden iframe silently fails and the text goes ' +
+    'to the visible terminal. The "Landed in frame" line (iframe index, title, URL) reports where the text went ' +
+    'after the fact; it is a check, not a guard. ' +
+    'For web terminals a successful result only means the browser accepted the keystrokes; it does not prove ' +
+    'the SSH session is connected or that the remote command ran or finished — read the terminal output back. ' +
+    'Failures are INPUT_NOT_LANDED and state what was already sent: "No input was sent" (safe to retry after fixing ' +
+    'the target), "A focusing click was dispatched, but no text or keys were sent", or "Input WAS sent" ' +
+    '(read the field back before retrying; never resend blindly). ' +
     'Landing is verified: when focus is not on an editable element the call fails with INPUT_NOT_LANDED ' +
     'instead of silently discarding the text. Focus inside same-origin iframes (e.g. web terminals) is followed ' +
     'to the inner element; inside a cross-origin iframe it cannot be read, so the text is sent and the result is ' +
@@ -242,8 +253,9 @@ const type = defineTool({
       result.unverified === true
         ? '\nUnverified: focus is inside a cross-origin iframe, so landing could not be checked — confirm with a screenshot.'
         : ''
+    const frame = result.frame !== undefined ? `\nLanded in frame: ${result.frame}` : ''
     return toolText(
-      `Typed into ${args.ref ?? 'focused element'}${suffix}${args.submit ? ' and pressed Enter' : ''}${value}${unverified}`,
+      `Typed into ${args.ref ?? 'focused element'}${suffix}${args.submit ? ' and pressed Enter' : ''}${frame}${value}${unverified}`,
     )
   },
 })
@@ -256,6 +268,7 @@ const pressKey = defineTool({
     'ArrowUp/Down/Left/Right, Home, End, PageUp/PageDown, Insert, F1-F24, Space, or a single character (a, A, !, :, space). ' +
     'modifiers: ["ctrl"|"alt"|"shift"|"meta"] — e.g. press_key(key:"a", modifiers:["ctrl"]) selects all. ' +
     'Pass ref to scroll the element into view, DOM.focus it (no click), then press; otherwise the key goes to the current focus. ' +
+    'With ref, a hidden, disabled or unfocusable target fails with INPUT_NOT_LANDED and no key is pressed. ' +
     'Key delivery is probed first: after window resize/focus loss CDP key events can be silently dropped ' +
     '(IME insertion still works) — the tool re-focuses the window to recover and fails loudly with ' +
     'KEY_PIPELINE_DEAD when keys would not land; switch to type(mode="set") or click-based activation then.',
