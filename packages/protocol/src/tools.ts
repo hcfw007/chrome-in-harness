@@ -34,6 +34,8 @@ export const TOOL_ERROR_CODES = {
   ELEMENT_COVERED: 'ELEMENT_COVERED',
   /** 目标 tab 已关闭（常见于会话间隔后沿用旧 tabId）——开新 tab 或改用现存 tab。 */
   TAB_CLOSED: 'TAB_CLOSED',
+  /** 有未处理的原生对话框（alert/confirm/prompt/beforeunload），渲染进程被阻塞——先 handle_dialog。 */
+  DIALOG_OPEN: 'DIALOG_OPEN',
   /** takeover 目标在用户自建的其他分组里：不擅自拆用户的分组，请用户先移出。 */
   TAB_IN_USER_GROUP: 'TAB_IN_USER_GROUP',
   /** server 侧：扩展未连接 / 调用中途断开（浏览器未开、扩展被禁用或 SW 正在重启）。 */
@@ -431,6 +433,30 @@ export const addAllowlistDomainResult = z.object({
   domains: z.array(z.string()),
 })
 
+/**
+ * handle_dialog：原生对话框（alert / confirm / prompt / beforeunload）的唯一出口。
+ * 这类对话框是浏览器 UI，不在 DOM / AX 树里，evaluate_script 和 click 都碰不到；
+ * 对话框打开期间渲染进程被阻塞，其余工具会以 DIALOG_OPEN 快速失败。
+ */
+export const handleDialogParams = z.object({
+  /** true = 接受（OK / Leave / 确认），false = 取消（Cancel / Stay / 关闭）。 */
+  accept: z.boolean(),
+  /** prompt 类型的输入文本；对其他类型无效。 */
+  promptText: z.string().max(2_000).optional(),
+  ...tabIdField,
+})
+
+export const handleDialogResult = z.object({
+  /** false = 该 tab 当前没有对话框（未做任何操作，不是错误）。 */
+  handled: z.boolean(),
+  /** 本次动作的意图（回传以便核对 accept 是否传反）。 */
+  accept: z.boolean(),
+  /** 实际处理的对话框类型：alert / confirm / prompt / beforeunload。 */
+  type: z.string().optional(),
+  message: z.string().optional(),
+  url: z.string().optional(),
+})
+
 // ---- Phase 3b：受限 evaluateScript + 权限弹窗授权 ----
 
 export const SCRIPT_MAX_LENGTH = 8_000
@@ -610,6 +636,7 @@ export const TOOL_NAMES = [
   'get_html',
   'wait_for_response',
   'select_option',
+  'handle_dialog',
 ] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]

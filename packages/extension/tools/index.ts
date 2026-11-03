@@ -1,6 +1,7 @@
 import {addAllowlistDomain} from './allowlist'
 import {runActions} from './batch'
 import {readConsole, readNetwork, waitForResponse} from './debug'
+import {handleDialog} from './dialog'
 import {evaluateScript} from './evaluate'
 import {getText} from './get-text'
 import {getHtml, probe} from './inspect'
@@ -51,3 +52,4 @@ register('probe', probe)
 register('get_html', getHtml)
 register('wait_for_response', waitForResponse)
 register('select_option', selectOption)
+register('handle_dialog', handleDialog)

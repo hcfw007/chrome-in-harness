@@ -107,6 +107,34 @@ describe('run_actions def', () => {
 })
 
 describe('browser defs', () => {
+  test('handle_dialog reports what it accepted and how to continue', async () => {
+    const fake = fakeBridge({
+      handled: true,
+      accept: true,
+      type: 'beforeunload',
+      message: 'Changes you made may not be saved.',
+      url: 'https://x.test/a',
+    })
+    const content = await run(byName('handle_dialog'), {tabId: 7, accept: true}, fake.call)
+    expect(fake.received[0]).toEqual({tool: 'handle_dialog', params: {tabId: 7, accept: true}})
+    const text = (content[0] as {text: string}).text
+    expect(text).toContain('Accepted the beforeunload')
+    expect(text).toContain('Changes you made may not be saved.')
+    expect(text).toContain('retry the interrupted step')
+  })
+
+  test('handle_dialog says "dismissed" for accept:false', async () => {
+    const fake = fakeBridge({handled: true, accept: false, type: 'confirm', message: 'Delete?'})
+    const content = await run(byName('handle_dialog'), {tabId: 7, accept: false}, fake.call)
+    expect((content[0] as {text: string}).text).toContain('Dismissed the confirm "Delete?"')
+  })
+
+  test('handle_dialog treats "no dialog" as a plain result, not an error', async () => {
+    const fake = fakeBridge({handled: false, accept: true})
+    const content = await run(byName('handle_dialog'), {tabId: 7, accept: true}, fake.call)
+    expect((content[0] as {text: string}).text).toContain('No dialog was open')
+  })
+
   test('navigate formats url, title and load flag', async () => {
     const fake = fakeBridge({url: 'https://example.com/', title: 'Example', loaded: true})
     const content = await run(byName('navigate'), {url: 'https://example.com/'}, fake.call)

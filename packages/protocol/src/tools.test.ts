@@ -10,6 +10,7 @@ import {
   ensureTabResult,
   getTextParams,
   getTextResult,
+  handleDialogParams,
   hoverParams,
   hoverParamsError,
   navigateParams,
@@ -129,8 +130,16 @@ describe('params schemas', () => {
     expect(selectOptionParams.safeParse({ref: 'e3', text: ''}).success).toBe(false)
   })
 
-  test('click_at requires finite coords and the coordinates:true intent flag', () => {
-    expect(clickAtParams.safeParse({x: 100, y: 20, coordinates: true}).success).toBe(true)
+  test('handle_dialog requires an explicit accept and bounds promptText', () => {
+    expect(handleDialogParams.safeParse({accept: true}).success).toBe(true)
+    expect(handleDialogParams.safeParse({accept: false, promptText: 'hello'}).success).toBe(true)
+    // accept 必须显式给：默认为 true 会在 confirm/beforeunload 上误接受
+    expect(handleDialogParams.safeParse({}).success).toBe(false)
+    expect(handleDialogParams.safeParse({accept: 'yes'}).success).toBe(false)
+    expect(handleDialogParams.safeParse({accept: true, promptText: 'x'.repeat(2_001)}).success).toBe(false)
+  })
+
+  test('click_at requires finite coords and the coordinates:true intent flag', () => {    expect(clickAtParams.safeParse({x: 100, y: 20, coordinates: true}).success).toBe(true)
     expect(clickAtParams.safeParse({x: 100, y: 20}).success).toBe(false)
     expect(clickAtParams.safeParse({x: 100, y: 20, coordinates: false}).success).toBe(false)
     expect(clickAtParams.safeParse({x: Number.NaN, y: 20, coordinates: true}).success).toBe(false)

@@ -71,7 +71,7 @@ Chrome 扩展 · MV3 service worker / WXT
 
 ## 工具与行为细节
 
-**工具集**（31 个）：`ping`、`reload_extension`、`navigate`、`reload`、`snapshot`、`click`、`click_at`、`hover`、`type`、`press_key`、`get_text`、`probe`、`get_html`、`select_option`、`wait_for_response`、`scroll`、`scroll_to`、`screenshot`、`tab_list`、`tab_new`、`ensure_tab`、`tab_select`、`tab_close`、`takeover_tab`、`run_actions`、`read_console`、`read_network`、`wait`、`add_allowlist_domain`、`evaluate_script`、`request_permission`。
+**工具集**（32 个）：`ping`、`reload_extension`、`navigate`、`reload`、`snapshot`、`click`、`click_at`、`hover`、`type`、`press_key`、`get_text`、`probe`、`get_html`、`select_option`、`handle_dialog`、`wait_for_response`、`scroll`、`scroll_to`、`screenshot`、`tab_list`、`tab_new`、`ensure_tab`、`tab_select`、`tab_close`、`takeover_tab`、`run_actions`、`read_console`、`read_network`、`wait`、`add_allowlist_domain`、`evaluate_script`、`request_permission`。
 
 - **read_console / read_network**：CDP 采集的 console 与网络请求元数据（含耗时与细分失败原因；响应体与请求头不采集，`data:` URL 不记录）。缓冲从 tab 首次被工具 attach 起积累
 - **wait_for_response**：等 URL 含指定子串（可加 status / method）的请求完成，只看元数据；默认回看 2s，「先点击再等待」无竞态
@@ -95,6 +95,7 @@ Chrome 扩展 · MV3 service worker / WXT
 - **press_key**：单键/组合键（`ctrl`/`alt`/`shift`/`meta` + 键名，支持 F1-F24），可选先 focus 指定 ref；派发前有默认动作探针——临时离屏输入框验证按键真的产生字符插入（监听器探针检测不出「事件送达但默认动作被丢弃」的假活，resize/失焦后的典型死法），死了自动重开焦点仿真/激活自愈，仍死显式报 `KEY_PIPELINE_DEAD`
 - **get_text**：优先读 AX value（虚拟滚动编辑器全文唯一可靠读数），innerText 兜底，上限 8KB
 - **select_option**：按可见文本选择下拉项，`ref` 指向原生 `<select>` 或自定义下拉（antd / Element / ARIA combobox）的选择框。原生 select 直接设值；自定义下拉点开后用真实鼠标点一次匹配项，再回读选择框显示的值。精确匹配优先于包含匹配，禁用项拒绝；`search:true` 先在搜索框输入文本过滤，用于虚拟列表里未渲染的项；找不到时报错列出当前可见选项
+- **handle_dialog**：处理原生对话框——`alert` / `confirm` / `prompt` / `beforeunload`（「离开此网站？」）。这类对话框是浏览器 UI，不在快照与 AX 树里，`click` / `evaluate_script` 都碰不到；对话框打开期间渲染进程被阻塞，其余工具一律快速失败并报 `DIALOG_OPEN`（而不是干等到超时）。`accept:true` = 确定 / 离开 / 确认，`accept:false` = 取消 / 留下 / 关闭，`promptText` 填 prompt 输入框。attach 后即订阅 `Page.javascriptDialogOpening`，SW 重启后即使本地状态丢失也能直接按 CDP 报错判定「本来就没有对话框」（返回 `handled:false`，不算错误）
 - **hover**：`ref` / `selector` / `text` / `x+y` 四选一，selector 适合 snapshot 里没有 ref 的纯图标元素（如 tooltip 触发器）
 - **type**：`mode="insert"`（默认）/ `mode="verbatim"`（Monaco 类编辑器逐行 insertText 还原缩进，无 trim）/ `mode="set"`（monaco `setValue` 原子写整个缓冲——绕开键盘/焦点/IME 通路，窗口失焦、键路死亡、编辑器塌缩都不影响；ref 可省，单编辑器页面自动选中）；焦点不在可编辑元素时显式报 `INPUT_NOT_LANDED` 而非静默假成功；多 iframe 页面（多会话 Web 终端）务必传目标输入框的 `ref`：目标隐藏、disabled、被别的 iframe 盖住、已分离或 ref 过期时直接拒绝，不回退到其他输入框；不传 `ref` 时按当前实际焦点输入，`evaluate_script` 里对隐藏 iframe 的 `focus()` 会静默失败，结果中的 `Landed in frame` 只是事后核对、不是输入前的绑定；输入成功只代表浏览器收到了按键，不代表 SSH 已连接或远端命令已执行；`clear:true` 用全选（macOS Cmd+A，其余 Ctrl+A）+ Delete 清空，清不掉时报错而不追加；返回插入点概要 `{line, col}` 和输入后的实际值供模型自查
 - **wait editorRendered**：Monaco 渲染完成 = 高度 > 40px 且宽度 > 200px 且有非空 view-line——resize 后塌缩成 5×5 窄条的假就绪不再放过；检测到塌缩自动按父容器尺寸强制 `layout()` 重排救回（无参 layout 会按自身窄宽度自我维持，必须显式传维度）
@@ -237,8 +238,9 @@ agent 应优先使用 `ensure_tab`，保存返回的 `{tabId, url, reused}`，�
 | `STALE_REF` / `NO_SNAPSHOT` | ref 过期或扩展重启过，重新 snapshot |
 | `ELEMENT_COVERED` | 目标中心点被遮罩或浮层盖住，`click` / `type` / `hover` / `select_option` 没有派发输入；先关掉遮挡层，或改操作遮挡层里的元素 |
 | `INPUT_NOT_LANDED` | `type` / `press_key` 没能把输入送进目标。报文说明已发出的内容：`No input was sent`（修正目标后可重试）/ `A focusing click was dispatched…`（只点了、没打字）/ `Input WAS sent`（先回读字段，不要盲目重发） |
+| `DIALOG_OPEN` | 页面上有未处理的原生对话框（`alert` / `confirm` / `prompt` / `beforeunload`），渲染进程被阻塞，命令没有下发；先 `handle_dialog`（`accept: true` 确定/离开，`false` 取消/留下）再重试 |
 | `EXTENSION_DISCONNECTED` | 扩展未连接；刚断开时多半在重连，稍等几秒重试 |
-| `TOOL_TIMEOUT` | 扩展超时未回包：页面卡住、有弹窗挡住，或 DevTools 占用了 debugger |
+| `TOOL_TIMEOUT` | 扩展超时未回包：页面卡住或 DevTools 占用了 debugger（原生对话框会先报 `DIALOG_OPEN`，不会走到这里） |
 | `DEBUGGER_BUSY` | 该标签已打开 DevTools，关掉后重试 |
 
 不带这类代码的报错（例如权限弹窗被拒、工具列表整体消失）来自 MCP 客户端或宿主，不是本服务。

@@ -7,6 +7,8 @@ import {
   countWaitConditions,
   getTextParams,
   getTextResult,
+  handleDialogParams,
+  handleDialogResult,
   hoverParamsError,
   hoverParamsShape,
   hoverResult,
@@ -492,6 +494,35 @@ const selectOption = defineTool({
   },
 })
 
+/**
+ * handle_dialog：原生对话框（浏览器 UI）——alert / confirm / prompt / beforeunload。
+ * 打开期间渲染进程被阻塞、其他工具一律 DIALOG_OPEN，所以这里必须明确 accept 的语义。
+ */
+const handleDialog = defineTool({
+  name: 'handle_dialog',
+  title: 'Accept or dismiss a native browser dialog',
+  description:
+    'Accept or dismiss a native browser dialog: alert, confirm, prompt, or the beforeunload "Leave site?" ' +
+    'confirmation. These dialogs are browser UI — they are NOT in the accessibility snapshot and click/evaluate_script ' +
+    'cannot reach them. While one is open the page is blocked and every other tool fails fast with DIALOG_OPEN, so ' +
+    'call this first. accept:true confirms (OK / Leave / 确认) and accept:false cancels (Cancel / Stay / 关闭); ' +
+    'promptText fills the input of a prompt dialog. Reports handled:false when no dialog was open (not an error). ' +
+    'Side effects are real: accepting a confirm runs the page\'s confirm branch, accepting beforeunload lets the ' +
+    'navigation or close proceed.',
+  schema: handleDialogParams.shape,
+  async run(args, call) {
+    const result = await callBridge(call, 'handle_dialog', args, handleDialogResult)
+    if (!result.handled) {
+      return toolText('No dialog was open on this tab — nothing to handle (no input was sent).')
+    }
+    const label = result.type ?? 'dialog'
+    const text = result.message !== undefined && result.message.length > 0 ? ` ${JSON.stringify(result.message)}` : ''
+    const what = result.accept ? 'Accepted' : 'Dismissed'
+    const url = result.url !== undefined ? ` on ${result.url}` : ''
+    return toolText(`${what} the ${label}${text}${url} — the page is unblocked; retry the interrupted step.`)
+  },
+})
+
 export const BROWSER_TOOL_DEFS: readonly ToolDef[] = [
   navigate,
   wait,
@@ -509,5 +540,6 @@ export const BROWSER_TOOL_DEFS: readonly ToolDef[] = [
   probe,
   getHtml,
   screenshot,
+  handleDialog,
 ]
 

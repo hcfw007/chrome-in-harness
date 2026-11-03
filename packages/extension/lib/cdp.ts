@@ -5,6 +5,9 @@
 
 import {TOOL_ERROR_CODES} from '@chrome-in-harness/protocol'
 
+import {peekPendingDialog} from './dialog-state'
+import type {PendingDialog} from './dialog-state'
+
 /** 「扩展认为已 attach」的 tab 集合；SW 重启后用 getTargets 惰性重查。 */
 const sessions = new Map<number, true>()
 const eventWaiters = new Map<string, Array<(payload: unknown) => void>>()
@@ -95,6 +98,22 @@ function normalizeSendError(message: string): Error {
   return new Error(message)
 }
 
+/**
+ * 对话框开着时仍然可以发的命令：由浏览器进程处理，不依赖被阻塞的渲染进程。
+ * 其余命令（Runtime/DOM/Accessibility/Input/Network…）会一直挂到超时，
+ * 所以直接快速失败并指向 handle_dialog，而不是让模型对着 TOOL_TIMEOUT 猜。
+ */
+const DIALOG_SAFE_METHODS = new Set(['Page.handleJavaScriptDialog', 'Page.enable'])
+
+function dialogBlockedError(dialog: PendingDialog): Error {
+  const quoted = dialog.message.length > 0 ? ` — ${JSON.stringify(dialog.message)}` : ''
+  return new Error(
+    `${TOOL_ERROR_CODES.DIALOG_OPEN}: this tab has an open ${dialog.type} dialog${quoted}, and the page is blocked ` +
+      'until it is dismissed; the command was not sent. Call handle_dialog({accept: true}) to confirm ' +
+      '(OK / Leave) or handle_dialog({accept: false}) to cancel (Cancel / Stay), then retry.',
+  )
+}
+
 /** 发送一条 CDP 命令；未 attach 自动补 attach（自愈）。 */
 export async function send<T = unknown>(
   tabId: number,
@@ -102,6 +121,8 @@ export async function send<T = unknown>(
   params?: Record<string, unknown>,
 ): Promise<T> {
   if (!sessions.has(tabId)) await ensureAttached(tabId)
+  const dialog = peekPendingDialog(tabId)
+  if (dialog !== undefined && !DIALOG_SAFE_METHODS.has(method)) throw dialogBlockedError(dialog)
   return new Promise<T>((resolve, reject) => {
     chrome.debugger.sendCommand({tabId}, method, params ?? {}, (result?: object) => {
       const message = lastErrorMessage()

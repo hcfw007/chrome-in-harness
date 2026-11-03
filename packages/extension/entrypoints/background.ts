@@ -3,6 +3,7 @@ import {initCdpListeners, onAttach} from '../lib/cdp'
 import {dropCollectors, ensureCollectors} from '../lib/cdp-commands'
 import {connect} from '../lib/connection'
 import {consoleBuffer} from '../lib/console-buffer'
+import {dropDialogWatch, watchDialogs} from '../lib/dialog'
 import {networkBuffer} from '../lib/network-buffer'
 import {refStore} from '../lib/ref-store'
 import {forgetScreenshot} from '../lib/screenshot-geometry'
@@ -23,8 +24,10 @@ export default defineBackground(() => {
 
   // tab 一旦 attach，立即 enable Runtime/Network/Log 并开始采集——
   // 缓冲从首次 attach 起积累，此前的消息不可得。
+  // 原生对话框同理由此开始监听：等真弹出再订阅就晚了（Page domain 未 enable 不派发事件）。
   onAttach((tabId) => {
     ensureCollectors(tabId)
+    watchDialogs(tabId)
   })
 
   // 调试会话被强制分离（DevTools 接管 / 用户取消 / tab 关闭）：
@@ -34,6 +37,7 @@ export default defineBackground(() => {
     consoleBuffer.clear(tabId)
     networkBuffer.clear(tabId)
     dropCollectors(tabId)
+    dropDialogWatch(tabId)
     forgetScreenshot(tabId)
   })
 
@@ -48,6 +52,7 @@ export default defineBackground(() => {
     consoleBuffer.clear(tabId)
     networkBuffer.clear(tabId)
     dropCollectors(tabId)
+    dropDialogWatch(tabId)
     forgetVersionFloor(tabId)
     forgetScreenshot(tabId)
   })

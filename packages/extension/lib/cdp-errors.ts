@@ -19,3 +19,15 @@ export function isStaleNodeError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
   return STALE_NODE_MARKERS.some((marker) => message.includes(marker))
 }
+
+/**
+ * CDP 在没有对话框可处理时返回的报文（大小写不敏感）。
+ * handle_dialog 据此把「本来就没有对话框」判为 handled:false，而不是抛错：
+ * SW 重启后本地状态可能丢失，但对话框其实还开着——所以总是先尝试命令，再看这条报错。
+ */
+const NO_DIALOG_MARKERS: readonly string[] = ['no dialog is showing', 'no javascript dialog']
+
+export function isNoDialogError(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase()
+  return NO_DIALOG_MARKERS.some((marker) => message.includes(marker))
+}

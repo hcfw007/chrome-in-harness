@@ -28,6 +28,14 @@ async function enableOnce(tabId: number, domain: string, command: string): Promi
   }
 }
 
+/**
+ * 打开 Page domain：导航等待与对话框事件（Page.javascriptDialogOpening）都依赖它。
+ * 未 enable 的 domain 不派发事件，只订阅会静默拿不到任何对话框。
+ */
+export async function ensurePageDomain(tabId: number): Promise<void> {
+  await enableOnce(tabId, 'Page', 'Page.enable')
+}
+
 export interface EvaluateOptions {
   /** 以用户手势执行：脚本内 element.click() 触发的 window.open 等需要 user activation 的行为不被拦截。 */
   readonly userGesture?: boolean
@@ -257,7 +265,7 @@ async function triggerAndWait(
   trigger: () => Promise<unknown>,
   waitUntil: NavigateWaitUntil,
 ): Promise<{loaded: boolean}> {
-  await enableOnce(tabId, 'Page', 'Page.enable')
+  await ensurePageDomain(tabId)
   if (waitUntil === 'load') {
     const [loadEvent] = await Promise.all([
       waitForEvent(tabId, 'Page.loadEventFired', NAVIGATE_TIMEOUT_MS),
