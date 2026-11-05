@@ -105,6 +105,9 @@ function normalizeSendError(message: string): Error {
  */
 const DIALOG_SAFE_METHODS = new Set(['Page.handleJavaScriptDialog', 'Page.enable'])
 
+/** 单条 CDP 命令的兜底超时（桥的总超时是 30s，这里提前收口并给出可行动的提示）。 */
+const SEND_TIMEOUT_MS = 15_000
+
 function dialogBlockedError(dialog: PendingDialog): Error {
   const quoted = dialog.message.length > 0 ? ` — ${JSON.stringify(dialog.message)}` : ''
   return new Error(
@@ -124,7 +127,24 @@ export async function send<T = unknown>(
   const dialog = peekPendingDialog(tabId)
   if (dialog !== undefined && !DIALOG_SAFE_METHODS.has(method)) throw dialogBlockedError(dialog)
   return new Promise<T>((resolve, reject) => {
+    // 兜底超时：对话框/挂死的渲染进程会让命令永远不回调，调用方只能等桥的 30s 超时，
+    // 报出来的是一句没法行动的「页面忙」。这里提前收口并给出可行动的提示。
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      reject(
+        new Error(
+          `${TOOL_ERROR_CODES.TOOL_TIMEOUT}: "${method}" got no answer within ${SEND_TIMEOUT_MS}ms — ` +
+            'the page renderer may be blocked by a native dialog (alert/confirm/prompt/beforeunload) ' +
+            'or DevTools took over the debugger; call handle_dialog, or close DevTools, then retry',
+        ),
+      )
+    }, SEND_TIMEOUT_MS)
     chrome.debugger.sendCommand({tabId}, method, params ?? {}, (result?: object) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
       const message = lastErrorMessage()
       if (message.length > 0) {
         if (message.includes('not attached')) sessions.delete(tabId)
