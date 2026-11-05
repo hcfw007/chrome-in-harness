@@ -95,7 +95,7 @@ Chrome 扩展 · MV3 service worker / WXT
 - **press_key**：单键/组合键（`ctrl`/`alt`/`shift`/`meta` + 键名，支持 F1-F24），可选先 focus 指定 ref；派发前有默认动作探针——临时离屏输入框验证按键真的产生字符插入（监听器探针检测不出「事件送达但默认动作被丢弃」的假活，resize/失焦后的典型死法），死了自动重开焦点仿真/激活自愈，仍死显式报 `KEY_PIPELINE_DEAD`
 - **get_text**：优先读 AX value（虚拟滚动编辑器全文唯一可靠读数），innerText 兜底，上限 8KB
 - **select_option**：按可见文本选择下拉项，`ref` 指向原生 `<select>` 或自定义下拉（antd / Element / ARIA combobox）的选择框。原生 select 直接设值；自定义下拉点开后用真实鼠标点一次匹配项，再回读选择框显示的值。精确匹配优先于包含匹配，禁用项拒绝；`search:true` 先在搜索框输入文本过滤，用于虚拟列表里未渲染的项；找不到时报错列出当前可见选项
-- **handle_dialog**：处理原生对话框——`alert` / `confirm` / `prompt` / `beforeunload`（「离开此网站？」）。这类对话框是浏览器 UI，不在快照与 AX 树里，`click` / `evaluate_script` 都碰不到；对话框打开期间渲染进程被阻塞，其余工具一律快速失败并报 `DIALOG_OPEN`（而不是干等到超时）。`accept:true` = 确定 / 离开 / 确认，`accept:false` = 取消 / 留下 / 关闭，`promptText` 填 prompt 输入框。attach 后即订阅 `Page.javascriptDialogOpening`，SW 重启后即使本地状态丢失也能直接按 CDP 报错判定「本来就没有对话框」（返回 `handled:false`，不算错误）
+- **handle_dialog**：处理原生对话框——`alert` / `confirm` / `prompt` / `beforeunload`（「离开此网站？」）。这类对话框是浏览器 UI，不在快照与 AX 树里，`click` / `evaluate_script` 都碰不到；对话框打开期间渲染进程被阻塞，其余工具一律快速失败并报 `DIALOG_OPEN`（而不是干等到超时）。`accept:true` = 确定 / 离开 / 确认，`accept:false` = 取消 / 留下 / 关闭，`promptText` 填 prompt 输入框。attach 后即订阅 `Page.javascriptDialogOpening`，SW 重启后即使本地状态丢失也能直接按 CDP 报错判定「本来就没有对话框」（返回 `handled:false`，不算错误）。注意 `beforeunload` 现在会被自动放行、不再弹给 agent 决策（见上文「风险：受管 tab 上的 beforeunload 提醒被关闭」），这里的支持保留给 attach 前就已加载的文档
 - **hover**：`ref` / `selector` / `text` / `x+y` 四选一，selector 适合 snapshot 里没有 ref 的纯图标元素（如 tooltip 触发器）
 - **type**：`mode="insert"`（默认）/ `mode="verbatim"`（Monaco 类编辑器逐行 insertText 还原缩进，无 trim）/ `mode="set"`（monaco `setValue` 原子写整个缓冲——绕开键盘/焦点/IME 通路，窗口失焦、键路死亡、编辑器塌缩都不影响；ref 可省，单编辑器页面自动选中）；焦点不在可编辑元素时显式报 `INPUT_NOT_LANDED` 而非静默假成功；多 iframe 页面（多会话 Web 终端）务必传目标输入框的 `ref`：目标隐藏、disabled、被别的 iframe 盖住、已分离或 ref 过期时直接拒绝，不回退到其他输入框；不传 `ref` 时按当前实际焦点输入，`evaluate_script` 里对隐藏 iframe 的 `focus()` 会静默失败，结果中的 `Landed in frame` 只是事后核对、不是输入前的绑定；输入成功只代表浏览器收到了按键，不代表 SSH 已连接或远端命令已执行；`clear:true` 用全选（macOS Cmd+A，其余 Ctrl+A）+ Delete 清空，清不掉时报错而不追加；返回插入点概要 `{line, col}` 和输入后的实际值供模型自查
 - **wait editorRendered**：Monaco 渲染完成 = 高度 > 40px 且宽度 > 200px 且有非空 view-line——resize 后塌缩成 5×5 窄条的假就绪不再放过；检测到塌缩自动按父容器尺寸强制 `layout()` 重排救回（无参 layout 会按自身窄宽度自我维持，必须显式传维度）
@@ -103,6 +103,7 @@ Chrome 扩展 · MV3 service worker / WXT
 - **域名白名单 + 运行时确认**：`chrome.storage.local` 持久化，扩展侧在 attach 前校验，空名单 = 拒绝全部；规则 `example.com` 匹配自身与任意深度子域。访问未授权域名时**自动弹出确认窗口**（显示域名与来源 URL，允许/拒绝），工具即时返回 `DOMAIN_CONFIRMATION_REQUIRED`（非阻塞），用户点「允许」后重试即通过——无需手动改配置
 - **受管组复用**：`tab_new` / `takeover_tab` 优先并入本窗口既有的 "Chrome in Harness" 组（组标题带 `⏳/✅/❌` 操作状态前缀时也识别为同一组），避免每开一个 tab 就新建组
 - **代价（已接受）**：attach 期间 Chrome 显示「正在调试」黄条；目标 tab 打开 DevTools 会顶掉扩展会话，工具报 `DEBUGGER_BUSY`，关闭 DevTools 后自动恢复
+- **风险：受管 tab 上的 `beforeunload` 提醒被关闭**：`beforeunload`（「Reload site? Changes you made may not be saved」/「离开此网站？」）是浏览器对「离开会丢掉未保存内容」的最后一道确认，但它是浏览器 UI——弹出期间盖在所有 tab 之上、吃掉整个窗口的键盘输入，并且会把触发它的那条命令（`click` / `navigate` / `reload`）卡到 30s `TOOL_TIMEOUT`（守卫拦不住已发出的在途命令）。因此 attach 时会在 `document_start` 注入拦截器，抢在页面脚本之前注册捕获阶段的 `beforeunload` 监听并 `stopImmediatePropagation()`，页面的处理器收不到事件，Chrome 不再创建该弹窗；attach 之前就已加载的文档无法摘除既有处理器，改为在 `Page.javascriptDialogOpening` 时立即放行（`accept: true`）。**后果**：受管 tab 上换页/刷新/点链接不再有「未保存」确认，换页会直接生效，页面里的未保存数据会丢；页面用 `beforeunload` 做的「离开会断开终端会话」之类提示也一并失效。这是有意的取舍——**不要把长期接管用在有未保存表单或需要离开提醒的 tab 上**。`alert` / `confirm` / `prompt` 不受影响，仍由 `handle_dialog` 显式决策
 - **后台操作（自动处理，不抢前台）**：CDP `Input.*` 在后台 tab 上会被静默丢弃；输入类工具派发前开 `Emulation.setFocusEmulationEnabled` 焦点仿真（Playwright / Claude-in-Chrome 同款），让后台 tab 直接接收输入，**不激活 tab、不打断用户当前视图**；仿真不可用时回退激活 tab；窗口最小化时自动恢复并聚焦，恢复失败报 `WINDOW_NOT_INTERACTIVE`
 
 ## 安装与运行
@@ -238,9 +239,9 @@ agent 应优先使用 `ensure_tab`，保存返回的 `{tabId, url, reused}`，�
 | `STALE_REF` / `NO_SNAPSHOT` | ref 过期或扩展重启过，重新 snapshot |
 | `ELEMENT_COVERED` | 目标中心点被遮罩或浮层盖住，`click` / `type` / `hover` / `select_option` 没有派发输入；先关掉遮挡层，或改操作遮挡层里的元素 |
 | `INPUT_NOT_LANDED` | `type` / `press_key` 没能把输入送进目标。报文说明已发出的内容：`No input was sent`（修正目标后可重试）/ `A focusing click was dispatched…`（只点了、没打字）/ `Input WAS sent`（先回读字段，不要盲目重发） |
-| `DIALOG_OPEN` | 页面上有未处理的原生对话框（`alert` / `confirm` / `prompt` / `beforeunload`），渲染进程被阻塞，命令没有下发；先 `handle_dialog`（`accept: true` 确定/离开，`false` 取消/留下）再重试 |
+| `DIALOG_OPEN` | 页面上有未处理的原生对话框（`alert` / `confirm` / `prompt`），渲染进程被阻塞，命令没有下发；先 `handle_dialog`（`accept: true` 确定/离开，`false` 取消/留下）再重试。`beforeunload` 已被自动放行，不会走到这里 |
 | `EXTENSION_DISCONNECTED` | 扩展未连接；刚断开时多半在重连，稍等几秒重试 |
-| `TOOL_TIMEOUT` | 扩展超时未回包：页面卡住或 DevTools 占用了 debugger（原生对话框会先报 `DIALOG_OPEN`，不会走到这里） |
+| `TOOL_TIMEOUT` | 扩展超时未回包：页面卡住或 DevTools 占用了 debugger（`alert` / `confirm` / `prompt` 会先报 `DIALOG_OPEN`；单条 CDP 命令另有 15s 兜底超时，同样报这个码并提示先试 `handle_dialog`） |
 | `DEBUGGER_BUSY` | 该标签已打开 DevTools，关掉后重试 |
 
 不带这类代码的报错（例如权限弹窗被拒、工具列表整体消失）来自 MCP 客户端或宿主，不是本服务。
